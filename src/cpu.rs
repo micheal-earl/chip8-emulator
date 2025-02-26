@@ -2,20 +2,45 @@ pub struct Cpu {
     registers: [u8; 16],
     memory: [u8; 512],
     stack: [u16; 16],
+    display: [[u8; 64]; 32],
     stack_pointer: usize,
     program_counter: usize,
-    //display: [[u8; 64]; 32]
 }
+
+// PICO-8 fonts consist of 16 characters, each defined by 5 bytes.
+const FONT_DATA: [u8; 80] = [
+    0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+    0x20, 0x60, 0x20, 0x20, 0x70, // 1
+    0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+    0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+    0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+    0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+    0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+    0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+    0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+    0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+    0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+    0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+    0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+    0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+    0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+    0xF0, 0x80, 0xF0, 0x80, 0x80, // F
+];
 
 impl Default for Cpu {
     fn default() -> Self {
-        Self {
+        let mut cpu = Self {
             registers: [0; 16],
             memory: [0; 512],
             stack: [0; 16],
+            display: [[0; 64]; 32],
             stack_pointer: 0,
             program_counter: 0,
-        }
+        };
+
+        cpu.write_fonts_to_memory();
+
+        cpu
     }
 }
 
@@ -166,6 +191,14 @@ impl Cpu {
         }
         Ok(())
     }
+
+    fn write_fonts_to_memory(&mut self) {
+        // The font data occupies 80 bytes starting at memory address 0x50.
+        // We don't use write_memory_batch here as that would be slower
+        let start = 0x50;
+        let end = start + FONT_DATA.len();
+        self.memory[start..end].copy_from_slice(&FONT_DATA);
+    }
 }
 
 #[cfg(test)]
@@ -262,5 +295,15 @@ mod tests {
         cpu.run();
 
         assert_eq!(cpu.registers[0], 45);
+    }
+
+    #[test]
+    fn font_data_written_correctly() {
+        let cpu = Cpu::default();
+        let expected_font_data: [u8; 80] = FONT_DATA;
+
+        let start = 0x50;
+        let end = start + expected_font_data.len();
+        assert_eq!(&cpu.memory[start..end], &expected_font_data);
     }
 }
