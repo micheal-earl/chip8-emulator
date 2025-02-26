@@ -206,95 +206,65 @@ mod tests {
     use super::*;
 
     #[test]
-    fn add_operation() {
+    fn add_operation() -> Result<(), &'static str> {
         let mut cpu = Cpu::default();
 
-        let reg = &mut cpu.registers;
-        reg[0] = 5;
-        reg[1] = 10;
-        reg[2] = 10;
-        reg[3] = 10;
+        // Write initial register values
+        cpu.write_register(0, 5)?;
+        cpu.write_register(1, 10)?;
+        cpu.write_register(2, 10)?;
+        cpu.write_register(3, 10)?;
 
-        let mem = &mut cpu.memory;
-        mem[0] = 0x80;
-        mem[1] = 0x14;
+        // Write opcodes into memory using write_memory_batch.
+        let memory_writes = [
+            (0x0000, 0x80), // Opcode 0x8014: ADD reg[1] to reg[0]
+            (0x0001, 0x14),
+            (0x0002, 0x80), // Opcode 0x8024: ADD reg[2] to reg[0]
+            (0x0003, 0x24),
+            (0x0004, 0x80), // Opcode 0x8034: ADD reg[3] to reg[0]
+            (0x0005, 0x34),
+        ];
 
-        mem[2] = 0x80;
-        mem[3] = 0x24;
-
-        mem[4] = 0x80;
-        mem[5] = 0x34;
+        cpu.write_memory_batch(&memory_writes)?;
 
         cpu.run();
 
-        assert_eq!(cpu.registers[0], 35);
+        assert_eq!(cpu.read_register(0).unwrap(), 35);
+
+        Ok(())
     }
 
     #[test]
-    fn call_and_ret_operations() {
+    fn call_and_ret_operations() -> Result<(), &'static str> {
         let mut cpu = Cpu::default();
 
-        let reg = &mut cpu.registers;
-        reg[0] = 5;
-        reg[1] = 10;
+        // Write initial register values
+        cpu.write_register(0x0, 5)?;
+        cpu.write_register(0x1, 10)?;
 
-        let mem = &mut cpu.memory;
-        mem[0x000] = 0x21;
-        mem[0x001] = 0x00;
+        let memory_writes = [
+            (0x000, 0x21), // Opcode 0x2100 CALL function at 0x100
+            (0x001, 0x00),
+            (0x002, 0x21), // Opcode 0x2100 CALL function at 0x100
+            (0x003, 0x00),
+            (0x004, 0x00), // HALT
+            (0x005, 0x00),
+            // Function
+            (0x100, 0x80), // Opcode 0x8014: ADD reg[1] to reg[0]
+            (0x101, 0x14),
+            (0x102, 0x80), // Opcode 0x8014: ADD reg[1] to reg[0]
+            (0x103, 0x14),
+            (0x104, 0x00), // RETURN
+            (0x105, 0xEE),
+        ];
 
-        mem[0x002] = 0x21;
-        mem[0x003] = 0x00;
-
-        mem[0x004] = 0x00;
-        mem[0x005] = 0x00;
-
-        //
-
-        mem[0x100] = 0x80;
-        mem[0x101] = 0x14;
-
-        mem[0x102] = 0x80;
-        mem[0x103] = 0x14;
-
-        mem[0x104] = 0x00;
-        mem[0x105] = 0xEE;
+        cpu.write_memory_batch(&memory_writes)?;
 
         cpu.run();
 
-        assert_eq!(cpu.registers[0], 45);
-    }
+        assert_eq!(cpu.read_register(0).unwrap(), 45);
 
-    #[test]
-    fn mult_add_expression() {
-        let mut cpu = Cpu::default();
-
-        let reg = &mut cpu.registers;
-        reg[0] = 5;
-        reg[1] = 10;
-
-        let mem = &mut cpu.memory;
-        mem[0x000] = 0x21; // Call function as 0x100
-        mem[0x001] = 0x00;
-
-        mem[0x002] = 0x21; // Call function as 0x100
-        mem[0x003] = 0x00;
-
-        mem[0x004] = 0x00; // HALT
-        mem[0x005] = 0x00;
-
-        // Function
-        mem[0x100] = 0x80; // ADD reg[1] to reg[0]
-        mem[0x101] = 0x14;
-
-        mem[0x102] = 0x80; // ADD reg[1] to reg[0]
-        mem[0x103] = 0x14;
-
-        mem[0x104] = 0x00; // Return
-        mem[0x105] = 0xEE;
-
-        cpu.run();
-
-        assert_eq!(cpu.registers[0], 45);
+        Ok(())
     }
 
     #[test]
