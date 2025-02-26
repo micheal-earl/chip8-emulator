@@ -4,6 +4,9 @@ use cpu::Cpu;
 fn main() -> Result<(), &'static str> {
     let mut cpu = Cpu::default();
 
+    cpu.write_register(0x0, 5)?;
+    cpu.write_register(0x1, 10)?;
+
     let memory_writes = [
         (0x000, 0x21), // Call function at 0x100
         (0x001, 0x00),

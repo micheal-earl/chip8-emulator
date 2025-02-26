@@ -4,6 +4,7 @@ pub struct Cpu {
     stack: [u16; 16],
     stack_pointer: usize,
     program_counter: usize,
+    //display: [[u8; 64]; 32]
 }
 
 impl Default for Cpu {
@@ -20,9 +21,9 @@ impl Default for Cpu {
 
 impl Cpu {
     fn read_opcode(&self) -> u16 {
-        let p = self.program_counter;
-        let op_high_byte = self.memory[p] as u16;
-        let op_low_byte = self.memory[p + 1] as u16;
+        let pc = self.program_counter;
+        let op_high_byte = self.memory[pc] as u16;
+        let op_low_byte = self.memory[pc + 1] as u16;
 
         op_high_byte << 8 | op_low_byte
     }
