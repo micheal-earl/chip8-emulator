@@ -186,7 +186,7 @@ impl Cpu {
 
     /// (2nnn) CALL sub-routine at `addr`
     fn call(&mut self, addr: u16) {
-        if self.stack_pointer > self.stack.len() {
+        if self.stack_pointer >= self.stack.len() {
             panic!("Stack Overflow!")
         }
 
