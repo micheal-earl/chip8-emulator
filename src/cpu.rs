@@ -381,9 +381,9 @@ impl Cpu {
     }
 
     fn write_fonts_to_memory(&mut self) {
-        // The font data occupies 80 bytes starting at memory address 0x50.
+        // The font data occupies 80 bytes starting at memory address 0x000.
         // We don't use write_memory_batch here as that would be slower
-        let start = 0x00;
+        let start = 0x000;
         let end = start + FONT_DATA.len();
         self.memory[start..end].copy_from_slice(&FONT_DATA);
     }
