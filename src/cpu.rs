@@ -1,11 +1,15 @@
 use std::thread;
 use std::time;
 
+type OpCode = u16;
+type Instruction = (u8, u8, u8, u8, u8, u16);
+// TODO consider type Display = [u8; 256], etc
+
 pub struct Cpu {
     registers: [u8; 16],
     memory: [u8; 4096],
     stack: [u16; 16],
-    //display: [[u8; 64]; 32],
+    display: [u8; 256], //[[u8; 64]; 32],
     stack_pointer: usize,
     program_counter: usize,
 }
@@ -33,16 +37,13 @@ const FONT_DATA: [u8; 80] = [
 // TODO: delete these or make V0 - VF into constants
 //const V0: u8 = 0u8;
 
-type OpCode = u16;
-type Instruction = (u8, u8, u8, u8, u8, u16);
-
 impl Default for Cpu {
     fn default() -> Self {
         let mut cpu = Self {
             registers: [0; 16],
             memory: [0; 4096],
             stack: [0; 16],
-            //display: [[0; 64]; 32],
+            display: [0; 256],
             stack_pointer: 0,
             program_counter: 0x0200,
         };
@@ -137,7 +138,7 @@ impl Cpu {
 
     /// (00E0) CLEAR the display
     fn cls(&mut self) {
-        todo!("clear screen")
+        self.display = [0; 256];
     }
 
     /// (1nnn) JUMP to `addr`
@@ -195,6 +196,32 @@ impl Cpu {
         } else {
             self.registers[0xF] = 0;
         }
+    }
+
+    pub fn write_display(&mut self, pixel: u16, value: bool) {
+        // Calculate which byte holds the pixel.
+        let byte_index = (pixel / 8) as usize;
+        // Calculate the bit position within that byte.
+        // We assume bit 7 is the leftmost pixel, so we subtract the remainder from 7.
+        let bit_index = 7 - (pixel % 8);
+
+        // Check if the byte index is valid for our display buffer.
+        if byte_index >= self.display.len() {
+            // TODO add error
+            return;
+        }
+
+        if value {
+            // Set the bit to 1 to turn the pixel on.
+            self.display[byte_index] |= 1 << bit_index;
+        } else {
+            // Clear the bit to 0 to turn the pixel off.
+            self.display[byte_index] &= !(1 << bit_index);
+        }
+    }
+
+    pub fn read_display(&self) -> &[u8; 256] {
+        &self.display
     }
 
     pub fn read_register(&self, address: u8) -> Option<u8> {
@@ -282,9 +309,9 @@ mod tests {
 
         // Write opcodes into memory using write_memory_batch.
         let instructions = [
-            (0x0200, 0x8014), // Opcode 0x8014: ADD reg[1] to reg[0]
-            (0x0202, 0x8024), // Opcode 0x8024: ADD reg[2] to reg[0]
-            (0x0204, 0x8034), // Opcode 0x8034: ADD reg[3] to reg[0]
+            (0x0200, 0x8014), // 8014: ADD V1 to V0
+            (0x0202, 0x8024), // 8024: ADD V2 to V0
+            (0x0204, 0x8034), // 8034: ADD V3 to V0
         ];
 
         cpu.write_instructions_batch(&instructions)?;
