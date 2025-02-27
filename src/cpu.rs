@@ -157,8 +157,8 @@ impl Cpu {
     }
 
     /// (6xkk) LD sets the value `kk` into register `vx`
-    fn ld(&mut self, _xv: u8, _xkk: u8) {
-        todo!("ld");
+    fn ld(&mut self, xv: u8, xkk: u8) {
+        self.registers[xv as usize] = xkk;
     }
 
     /// (2nnn) CALL sub-routine at `addr`
@@ -368,6 +368,31 @@ mod tests {
         cpu.run();
 
         assert_eq!(cpu.read_register(0).unwrap(), 45);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ld_operation() -> Result<(), &'static str> {
+        let mut cpu = Cpu::default();
+
+        // The ld instruction is of the form 6xkk, where x is the register number
+        // and kk is the immediate value. We want to load 0xAB into register 3,
+        // so the opcode becomes 0x63AB.
+        //
+        // Then we write a jump instruction (1nnn) at 0x0202 to jump to an address
+        // that causes the run loop to exit (0xFFF, which is 4095 in decimal).
+        let instructions = [
+            (0x0200, 0x63AB), // 6xkk: load V3 with 0xAB.
+            (0x0202, 0x1FFF), // 1nnn: jump to 0xFFF, stopping execution.
+        ];
+
+        cpu.write_instructions_batch(&instructions)?;
+
+        cpu.run();
+
+        // Verify that register V3 holds the value 0xAB after execution.
+        assert_eq!(cpu.read_register(3).unwrap(), 0xAB);
 
         Ok(())
     }
