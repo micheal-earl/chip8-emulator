@@ -108,7 +108,8 @@ impl Cpu {
             (0x3, _, _, _) => self.se(x, kk),   // 3xkk Skip next instruction if Vx == kk
             (0x4, _, _, _) => self.sne(x, kk),  // 4xkk Skip next instruvtion if Vx != kk
             (0x5, _, _, 0x0) => self.se(x, y),  // 5xy0 Skip next instruction if Vx == Vy
-            (0x6, _, _, _) => self.ld(x, kk),   // 6xkk
+            (0x6, _, _, _) => self.ld(x, kk),   // 6xkk Write kk to Vx
+            (0x7, _, _, _) => self.add(x, kk),  // 7xkk Add kk to Vx, write result to Vx
             (0x8, _, _, _) => match d {
                 4 => self.add_xy(x, y),
                 _ => todo!("d not 4"),
@@ -147,18 +148,23 @@ impl Cpu {
     }
 
     /// (2xkk) SE  _S_kip if _e_qual
-    fn se(&mut self, _xv: u8, _xkk: u8) {
+    fn se(&mut self, _vx: u8, _kk: u8) {
         todo!("se");
     }
 
     /// (2xkk) SNE  _S_kip if _n_ot _e_qual
-    fn sne(&mut self, _xv: u8, _xkk: u8) {
+    fn sne(&mut self, _vx: u8, _kk: u8) {
         todo!("sne");
     }
 
-    /// (6xkk) LD sets the value `kk` into register `vx`
-    fn ld(&mut self, xv: u8, xkk: u8) {
-        self.registers[xv as usize] = xkk;
+    /// (6xkk) LD sets the value `kk` into register `Vx`
+    fn ld(&mut self, vx: u8, kk: u8) {
+        self.registers[vx as usize] = kk;
+    }
+
+    /// (7xkk) ADD adds the value `kk` to register `Vx` and stores the sum in 'Vx'
+    fn add(&mut self, x: u8, kk: u8) {
+        self.registers[x as usize] += kk;
     }
 
     /// (2nnn) CALL sub-routine at `addr`
@@ -297,8 +303,10 @@ impl Cpu {
 mod tests {
     use super::*;
 
+    // TODO comments on tests
+
     #[test]
-    fn add_operation() -> Result<(), &'static str> {
+    fn add_xy_operation() -> Result<(), &'static str> {
         let mut cpu = Cpu::default();
 
         // Write initial register values
@@ -324,6 +332,28 @@ mod tests {
     }
 
     #[test]
+    fn add_operation() -> Result<(), &'static str> {
+        let mut cpu = Cpu::default();
+
+        // Set an initial value in register V1.
+        cpu.write_register(1, 20)?;
+
+        let instructions = [
+            (0x0200, 0x7105), // 7xkk Add 0x05 to register V1 (20 + 5 = 25)
+            (0x0202, 0x1FFF), // 1nnn Jump to 0xFFF
+        ];
+
+        cpu.write_instructions_batch(&instructions)?;
+
+        cpu.run();
+
+        // Verify that register V1 now holds the value 25.
+        assert_eq!(cpu.read_register(1).unwrap(), 25);
+
+        Ok(())
+    }
+
+    #[test]
     fn jump_operation() -> Result<(), &'static str> {
         let mut cpu = Cpu::default();
 
@@ -339,7 +369,6 @@ mod tests {
 
         cpu.run();
 
-        // After the jump and add operation, register 0 should equal 5 + 7 = 12.
         assert_eq!(cpu.read_register(0).unwrap(), 12);
 
         Ok(())
@@ -376,22 +405,15 @@ mod tests {
     fn ld_operation() -> Result<(), &'static str> {
         let mut cpu = Cpu::default();
 
-        // The ld instruction is of the form 6xkk, where x is the register number
-        // and kk is the immediate value. We want to load 0xAB into register 3,
-        // so the opcode becomes 0x63AB.
-        //
-        // Then we write a jump instruction (1nnn) at 0x0202 to jump to an address
-        // that causes the run loop to exit (0xFFF, which is 4095 in decimal).
         let instructions = [
-            (0x0200, 0x63AB), // 6xkk: load V3 with 0xAB.
-            (0x0202, 0x1FFF), // 1nnn: jump to 0xFFF, stopping execution.
+            (0x0200, 0x63AB), // 6xkk load V3 with 0xAB.
+            (0x0202, 0x1FFF), // 1nnn jump to 0xFFF
         ];
 
         cpu.write_instructions_batch(&instructions)?;
 
         cpu.run();
 
-        // Verify that register V3 holds the value 0xAB after execution.
         assert_eq!(cpu.read_register(3).unwrap(), 0xAB);
 
         Ok(())
