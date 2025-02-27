@@ -10,6 +10,7 @@ pub struct Cpu {
     memory: [u8; 4096],
     stack: [u16; 16],
     display: [u8; 256], //[[u8; 64]; 32],
+    index: u16,
     stack_pointer: usize,
     program_counter: usize,
 }
@@ -44,6 +45,7 @@ impl Default for Cpu {
             memory: [0; 4096],
             stack: [0; 16],
             display: [0; 256],
+            index: 0,
             stack_pointer: 0,
             program_counter: 0x0200,
         };
@@ -114,6 +116,7 @@ impl Cpu {
                 4 => self.add_xy(x, y),
                 _ => todo!("d not 4"),
             },
+            (0xA, _, _, _) => self.ldi(nnn),
             _ => todo!("catch all"),
         }
     }
@@ -160,6 +163,11 @@ impl Cpu {
     /// (6xkk) LD sets the value `kk` into register `Vx`
     fn ld(&mut self, vx: u8, kk: u8) {
         self.registers[vx as usize] = kk;
+    }
+
+    /// (6xkk) LDI sets the value `nnn` into the index register (I register)
+    fn ldi(&mut self, nnn: u16) {
+        self.index = nnn;
     }
 
     /// (7xkk) ADD adds the value `kk` to register `Vx` and stores the sum in 'Vx'
@@ -362,7 +370,7 @@ mod tests {
 
         let instructions = [
             (0x0200, 0x1300), // 1nnn JUMP to nnn
-            (0x0300, 0x8014), // 8014: ADD V1 to V0
+            (0x0300, 0x8014), // 8014 ADD V1 to V0
         ];
 
         cpu.write_instructions_batch(&instructions)?;
@@ -383,12 +391,12 @@ mod tests {
         cpu.write_register(0x0001, 10)?;
 
         let instructions = [
-            (0x0200, 0x2300), // 2nnn CALL subroutine at addr 300
-            (0x0202, 0x2300), // 2nnn CALL subroutine at addr 300
-            (0x0204, 0x1FFF), // 1nnn JUMP to nnn, in this case FFF is the end of memory
+            (0x0200, 0x2300), // 2nnn CALL subroutine at addr 0x300
+            (0x0202, 0x2300), // 2nnn CALL subroutine at addr 0x300
+            (0x0204, 0x1FFF), // 1nnn JUMP to nnn, in this case 0xFFF is the end of memory
             // Function
-            (0x0300, 0x8014), // Opcode 0x8014: ADD reg[1] to reg[0]
-            (0x0302, 0x8014), // Opcode 0x8014: ADD reg[1] to reg[0]
+            (0x0300, 0x8014), // 8014 ADD reg[1] to reg[0]
+            (0x0302, 0x8014), // 8014 ADD reg[1] to reg[0]
             (0x0304, 0x00EE), // RETURN
         ];
 
@@ -415,6 +423,24 @@ mod tests {
         cpu.run();
 
         assert_eq!(cpu.read_register(3).unwrap(), 0xAB);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ldi_operation() -> Result<(), &'static str> {
+        let mut cpu = Cpu::default();
+
+        let instructions = [
+            (0x0200, 0xA123), // Annn load I register with 0x123
+            (0x0202, 0x1FFF), // 1nnn jump to 0xFFF
+        ];
+
+        cpu.write_instructions_batch(&instructions)?;
+
+        cpu.run();
+
+        assert_eq!(cpu.index, 0x123);
 
         Ok(())
     }
