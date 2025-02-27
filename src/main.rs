@@ -25,6 +25,7 @@ fn display_buffer_to_rgb(buffer: &[u8]) -> Vec<u32> {
     pixels
 }
 
+// TODO proper error types instead of &'static str
 fn main() -> Result<(), &'static str> {
     // Wrap CPU in an Arc<Mutex<>> to share it between threads.
     let cpu = Arc::new(Mutex::new(Cpu::default()));

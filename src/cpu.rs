@@ -28,7 +28,7 @@ const FONT_DATA: [u8; 80] = [
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 ];
 
-const CLOCK_700HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1428);
+const DURATION_700HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1428);
 
 pub struct Cpu {
     registers: [u8; 16],
@@ -130,7 +130,7 @@ impl Cpu {
     pub fn run(&mut self) {
         // TODO: Make execution 700hz (double check this)
         // TODO: Add 60hz timer for sound and delay
-        let interval = CLOCK_700HZ_IN_MICROS;
+        let interval = DURATION_700HZ_IN_MICROS;
         let mut next_time = time::Instant::now() + interval;
         loop {
             if self.program_counter >= 4095 {
