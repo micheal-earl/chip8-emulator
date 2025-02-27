@@ -1,6 +1,10 @@
 pub mod cpu;
-use cpu::{Cpu, HEIGHT, WIDTH};
+pub mod rom;
+
+use cpu::{Cpu, DURATION_700HZ_IN_MICROS, HEIGHT, WIDTH};
 use minifb::{Key, Scale, ScaleMode, Window, WindowOptions};
+use std::env;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -27,6 +31,8 @@ fn display_buffer_to_rgb(buffer: &[u8]) -> Vec<u32> {
 
 // TODO proper error types instead of &'static str
 fn main() -> Result<(), &'static str> {
+    let args: Vec<String> = env::args().collect();
+
     // Wrap CPU in an Arc<Mutex<>> to share it between threads.
     let cpu = Arc::new(Mutex::new(Cpu::default()));
 
@@ -53,7 +59,21 @@ fn main() -> Result<(), &'static str> {
     //     }
     // }
 
-    {
+    if args.len() > 1 {
+        // Load ROM from file provided as command-line argument.
+        let rom_path = &args[1];
+        println!("Loading ROM: {}", rom_path);
+        let mut rom = rom::Rom::default();
+        rom.open_file(Path::new(rom_path));
+        rom.get_instructions()?;
+
+        // Write the ROM bytes into CPU memory starting at 0x200.
+        let mut cpu_lock = cpu.lock().unwrap();
+        let start_address = 0x200;
+        for (i, &byte) in rom.instructions.iter().enumerate() {
+            cpu_lock.write_memory((start_address + i) as u16, byte)?;
+        }
+    } else {
         let mut cpu_lock = cpu.lock().unwrap();
 
         // Load a program that draws three shapes with height 3:
@@ -122,8 +142,29 @@ fn main() -> Result<(), &'static str> {
     // Spawn a separate thread to run the CPU.
     let cpu_clone = Arc::clone(&cpu);
     thread::spawn(move || {
-        // This thread will run the CPU at 700Hz.
-        cpu_clone.lock().unwrap().run();
+        use std::thread::sleep;
+        use std::time::Instant;
+
+        // ~700 Hz => ~1428 microseconds per instruction:
+        let cycle_duration = DURATION_700HZ_IN_MICROS;
+        let mut next_time = Instant::now() + cycle_duration;
+
+        loop {
+            {
+                // Lock the CPU for just one instruction
+                let mut cpu = cpu_clone.lock().unwrap();
+                // If step() returns false, exit the loop
+                if !cpu.step() {
+                    break;
+                }
+            }
+            // Sleep until the next cycle
+            let now = Instant::now();
+            if now < next_time {
+                sleep(next_time - now);
+            }
+            next_time += cycle_duration;
+        }
     });
 
     // Set up the minifb window.

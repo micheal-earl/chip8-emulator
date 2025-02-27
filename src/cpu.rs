@@ -28,7 +28,8 @@ const FONT_DATA: [u8; 80] = [
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 ];
 
-const DURATION_700HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1428);
+pub const DURATION_700HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1428);
+pub const DURATION_1HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1_000_000);
 
 pub struct Cpu {
     registers: [u8; 16],
@@ -71,6 +72,10 @@ impl Cpu {
         let out = op_high_byte << 8 | op_low_byte;
         if out != 0 {
             println!("{}, {:#04x}", self.program_counter, &out);
+            println!(
+                "{}, {}, {}",
+                self.display[0], self.display[5], self.display[10]
+            )
         }
         // DEBUG ^
 
@@ -133,13 +138,10 @@ impl Cpu {
         let interval = DURATION_700HZ_IN_MICROS;
         let mut next_time = time::Instant::now() + interval;
         loop {
-            if self.program_counter >= 4095 {
+            let s = self.step();
+            if !s {
                 break;
             }
-
-            let opcode = self.fetch();
-            let instruction = Self::decode(opcode);
-            self.execute(instruction);
 
             // TODO the sleep calculation uses next_time - time::Instant::now(),
             // which might panic if the result is negative (if the CPU is busy)
@@ -148,6 +150,17 @@ impl Cpu {
             thread::sleep(next_time - time::Instant::now());
             next_time += interval;
         }
+    }
+
+    pub fn step(&mut self) -> bool {
+        if self.program_counter >= 4095 {
+            return false; // or return false if you want to exit
+        }
+
+        let opcode = self.fetch();
+        let instruction = Self::decode(opcode);
+        self.execute(instruction);
+        true
     }
 
     // TODO use API for manipulating cpu object even for private functions
