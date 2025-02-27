@@ -1,8 +1,11 @@
+use std::thread;
+use std::time;
+
 pub struct Cpu {
     registers: [u8; 16],
-    memory: [u8; 512],
+    memory: [u8; 4096],
     stack: [u16; 16],
-    display: [[u8; 64]; 32],
+    //display: [[u8; 64]; 32],
     stack_pointer: usize,
     program_counter: usize,
 }
@@ -27,15 +30,21 @@ const FONT_DATA: [u8; 80] = [
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 ];
 
+// TODO: delete these or make V0 - VF into constants
+//const V0: u8 = 0u8;
+
+type OpCode = u16;
+type Instruction = (u8, u8, u8, u8, u8, u16);
+
 impl Default for Cpu {
     fn default() -> Self {
         let mut cpu = Self {
             registers: [0; 16],
-            memory: [0; 512],
+            memory: [0; 4096],
             stack: [0; 16],
-            display: [[0; 64]; 32],
+            //display: [[0; 64]; 32],
             stack_pointer: 0,
-            program_counter: 0,
+            program_counter: 0x0200,
         };
 
         cpu.write_fonts_to_memory();
@@ -45,79 +54,110 @@ impl Default for Cpu {
 }
 
 impl Cpu {
-    fn read_opcode(&self) -> u16 {
+    fn fetch(&mut self) -> OpCode {
         let pc = self.program_counter;
         let op_high_byte = self.memory[pc] as u16;
         let op_low_byte = self.memory[pc + 1] as u16;
 
+        // TODO: Remove debug
+        let out = op_high_byte << 8 | op_low_byte;
+        if out != 0 {
+            println!("{}, {:#04x}", self.program_counter, &out);
+        }
+        // DEBUG ^
+
+        self.program_counter += 2;
+
         op_high_byte << 8 | op_low_byte
     }
 
-    pub fn run(&mut self) {
-        loop {
-            let opcode = self.read_opcode();
-            self.program_counter += 2;
+    fn decode(opcode: OpCode) -> Instruction {
+        // 0x73EE is an example OpCode
+        // In this OpCode, 73 = High Byte, EE = Low Byte
+        // and 7 = High Nibble, 3 = Low Nibble, same pattern for EE
 
-            // 0x73EE
-            // 73 = High Byte, EE = Low Byte
-            // 7 = High Nibble, 3 = Low Nibble, same for EE
+        // Var, Bits, Location,                  Description,
+        // n    4     low byte, low nibble       Number of bytes
+        // x    4     high byte, low nibble      CPU register
+        // y    4     low byte, high nibble      CPU register
+        // c    4     high byte, high nibble     Opcode group
+        // d    4     low byte, low nibble       Opcode subgroup
+        // kk   8     low byte, both nibbles     Integer
+        // nnn  12    high byte, low nibble      Memory address
+        //            and low byte, both nibbles
 
-            // Var, Bit-length, Location,                  Description,
-            // n    4           low byte, low nibble       Number of bytes
-            // x    4           high byte, low nibble      CPU register
-            // y    4           low byte, high nibble      CPU register
-            // c    4           high byte, high nibble     Opcode group
-            // d    4           low byte, low nibble       Opcode subgroup
-            // kk   8           low byte, both nibbles     Integer
-            // nnn  12          high byte, low nibble      Memory address
-            //                and low byte, both nibbles
+        let c = ((opcode & 0xF000) >> 12) as u8;
+        let x = ((opcode & 0x0F00) >> 8) as u8;
+        let y = ((opcode & 0x00F0) >> 4) as u8;
+        let d = (opcode & 0x000F) as u8; // op minor
+        let kk = (opcode & 0x00FF) as u8;
+        let nnn = opcode & 0x0FFF; // addr
 
-            let c = ((opcode & 0xF000) >> 12) as u8;
-            let x = ((opcode & 0x0F00) >> 8) as u8;
-            let y = ((opcode & 0x00F0) >> 4) as u8;
-            let d = (opcode & 0x000F) as u8; // op minor
-            let _kk = (opcode & 0x00FF) as u8;
-            let nnn = opcode & 0x0FFF; // addr
+        (c, x, y, d, kk, nnn)
+    }
 
-            match (c, x, y, d) {
-                (0, 0, 0, 0) => {
-                    return;
-                }
-                //(0, 0, 0xE, 0) => { /* Clear Screen op */ }
-                (0, 0, 0xE, 0xE) => self.ret(),
-                (0x1, _, _, _) => self.jmp(nnn),
-                (0x2, _, _, _) => self.call(nnn),
-                (0x2, _, _, _) => todo!(), //self.se(x, kk),
-                (0x2, _, _, _) => todo!(), //self.sne(x, kk),
-                (0x2, _, _, _) => todo!(), //self.se(x, y),
-                (0x2, _, _, _) => todo!(), //self.ld(x, kk),
-                (0x8, _, _, _) => match d {
-                    4 => self.add_xy(x, y),
-                    _ => todo!("opcode {:04x}", opcode),
-                },
-                _ => todo!("opcode {:04x}", opcode),
-            }
+    fn execute(&mut self, decoded: Instruction) {
+        let (c, x, y, d, kk, nnn) = decoded;
+        match (c, x, y, d) {
+            (0x0, 0x0, 0x0, 0x0) => return,     // 0000
+            (0x0, 0x0, 0xE, 0x0) => self.cls(), // 00E0 Clear the screen
+            (0x0, 0x0, 0xE, 0xE) => self.ret(), // 00EE Return from subroutine
+            (0x1, _, _, _) => self.jmp(nnn),    // 1nnn Jump to location nnn
+            (0x2, _, _, _) => self.call(nnn),   // Call subroutine at location nnn
+            (0x3, _, _, _) => self.se(x, kk),   // 3xkk Skip next instruction if Vx == kk
+            (0x4, _, _, _) => self.sne(x, kk),  // 4xkk Skip next instruvtion if Vx != kk
+            (0x5, _, _, 0x0) => self.se(x, y),  // 5xy0 Skip next instruction if Vx == Vy
+            (0x6, _, _, _) => self.ld(x, kk),   // 6xkk
+            (0x8, _, _, _) => match d {
+                4 => self.add_xy(x, y),
+                _ => todo!("d not 4"),
+            },
+            _ => todo!("catch all"),
         }
+    }
+
+    pub fn run(&mut self) {
+        // TODO: Make execution 700hz (double check this)
+        // TODO: Add 60hz timer for sound and delay
+        let interval = time::Duration::from_micros(1);
+        let mut next_time = time::Instant::now() + interval;
+        loop {
+            if self.program_counter >= 4095 {
+                break;
+            }
+
+            let opcode = self.fetch();
+            let instruction = Self::decode(opcode);
+            self.execute(instruction);
+
+            thread::sleep(next_time - time::Instant::now());
+            next_time += interval;
+        }
+    }
+
+    /// (00E0) CLEAR the display
+    fn cls(&mut self) {
+        todo!("clear screen")
     }
 
     /// (1nnn) JUMP to `addr`
     fn jmp(&mut self, addr: u16) {
-        todo!();
+        self.program_counter = addr as usize;
     }
 
-    /// (2xkk) SE  **S**tore if **e**qual
-    fn se(&mut self, xv: u8, xkk: u8) {
-        todo!();
+    /// (2xkk) SE  _S_kip if _e_qual
+    fn se(&mut self, _xv: u8, _xkk: u8) {
+        todo!("se");
     }
 
-    /// (2xkk) SNE  **S**tore if **n**ot **e**qual
-    fn sne(&mut self, xv: u8, xkk: u8) {
-        todo!();
+    /// (2xkk) SNE  _S_kip if _n_ot _e_qual
+    fn sne(&mut self, _xv: u8, _xkk: u8) {
+        todo!("sne");
     }
 
     /// (6xkk) LD sets the value `kk` into register `vx`
-    fn ld(&mut self, xv: u8, xkk: u8) {
-        todo!();
+    fn ld(&mut self, _xv: u8, _xkk: u8) {
+        todo!("ld");
     }
 
     /// (2nnn) CALL sub-routine at `addr`
@@ -192,10 +232,35 @@ impl Cpu {
         Ok(())
     }
 
+    pub fn write_instruction(
+        &mut self,
+        address: u16,
+        instruction: u16,
+    ) -> Result<(), &'static str> {
+        let index = address as usize;
+        if index + 1 >= self.memory.len() {
+            return Err("Memory address out of bounds");
+        }
+        // Split the instruction into high and low bytes.
+        self.memory[index] = (instruction >> 8) as u8;
+        self.memory[index + 1] = (instruction & 0xFF) as u8;
+        Ok(())
+    }
+
+    pub fn write_instructions_batch(
+        &mut self,
+        instructions: &[(u16, u16)],
+    ) -> Result<(), &'static str> {
+        for &(address, instruction) in instructions {
+            self.write_instruction(address, instruction)?;
+        }
+        Ok(())
+    }
+
     fn write_fonts_to_memory(&mut self) {
         // The font data occupies 80 bytes starting at memory address 0x50.
         // We don't use write_memory_batch here as that would be slower
-        let start = 0x50;
+        let start = 0x00;
         let end = start + FONT_DATA.len();
         self.memory[start..end].copy_from_slice(&FONT_DATA);
     }
@@ -210,26 +275,45 @@ mod tests {
         let mut cpu = Cpu::default();
 
         // Write initial register values
-        cpu.write_register(0, 5)?;
-        cpu.write_register(1, 10)?;
-        cpu.write_register(2, 10)?;
-        cpu.write_register(3, 10)?;
+        cpu.write_register(0x0000, 5)?;
+        cpu.write_register(0x0001, 10)?;
+        cpu.write_register(0x0002, 15)?;
+        cpu.write_register(0x0003, 7)?;
 
         // Write opcodes into memory using write_memory_batch.
-        let memory_writes = [
-            (0x0000, 0x80), // Opcode 0x8014: ADD reg[1] to reg[0]
-            (0x0001, 0x14),
-            (0x0002, 0x80), // Opcode 0x8024: ADD reg[2] to reg[0]
-            (0x0003, 0x24),
-            (0x0004, 0x80), // Opcode 0x8034: ADD reg[3] to reg[0]
-            (0x0005, 0x34),
+        let instructions = [
+            (0x0200, 0x8014), // Opcode 0x8014: ADD reg[1] to reg[0]
+            (0x0202, 0x8024), // Opcode 0x8024: ADD reg[2] to reg[0]
+            (0x0204, 0x8034), // Opcode 0x8034: ADD reg[3] to reg[0]
         ];
 
-        cpu.write_memory_batch(&memory_writes)?;
+        cpu.write_instructions_batch(&instructions)?;
 
         cpu.run();
 
-        assert_eq!(cpu.read_register(0).unwrap(), 35);
+        assert_eq!(cpu.read_register(0).unwrap(), 37);
+
+        Ok(())
+    }
+
+    #[test]
+    fn jump_operation() -> Result<(), &'static str> {
+        let mut cpu = Cpu::default();
+
+        cpu.write_register(0x0000, 5)?;
+        cpu.write_register(0x0001, 7)?;
+
+        let instructions = [
+            (0x0200, 0x1300), // 1nnn JUMP to nnn
+            (0x0300, 0x8014), // 8014: ADD V1 to V0
+        ];
+
+        cpu.write_instructions_batch(&instructions)?;
+
+        cpu.run();
+
+        // After the jump and add operation, register 0 should equal 5 + 7 = 12.
+        assert_eq!(cpu.read_register(0).unwrap(), 12);
 
         Ok(())
     }
@@ -239,26 +323,20 @@ mod tests {
         let mut cpu = Cpu::default();
 
         // Write initial register values
-        cpu.write_register(0x0, 5)?;
-        cpu.write_register(0x1, 10)?;
+        cpu.write_register(0x0000, 5)?;
+        cpu.write_register(0x0001, 10)?;
 
-        let memory_writes = [
-            (0x000, 0x21), // Opcode 0x2100 CALL function at 0x100
-            (0x001, 0x00),
-            (0x002, 0x21), // Opcode 0x2100 CALL function at 0x100
-            (0x003, 0x00),
-            (0x004, 0x00), // HALT
-            (0x005, 0x00),
+        let instructions = [
+            (0x0200, 0x2300), // 2nnn CALL subroutine at addr 300
+            (0x0202, 0x2300), // 2nnn CALL subroutine at addr 300
+            (0x0204, 0x1FFF), // 1nnn JUMP to nnn, in this case FFF is the end of memory
             // Function
-            (0x100, 0x80), // Opcode 0x8014: ADD reg[1] to reg[0]
-            (0x101, 0x14),
-            (0x102, 0x80), // Opcode 0x8014: ADD reg[1] to reg[0]
-            (0x103, 0x14),
-            (0x104, 0x00), // RETURN
-            (0x105, 0xEE),
+            (0x0300, 0x8014), // Opcode 0x8014: ADD reg[1] to reg[0]
+            (0x0302, 0x8014), // Opcode 0x8014: ADD reg[1] to reg[0]
+            (0x0304, 0x00EE), // RETURN
         ];
 
-        cpu.write_memory_batch(&memory_writes)?;
+        cpu.write_instructions_batch(&instructions)?;
 
         cpu.run();
 
@@ -268,11 +346,11 @@ mod tests {
     }
 
     #[test]
-    fn font_data_written_correctly() {
+    fn font_data_written() {
         let cpu = Cpu::default();
         let expected_font_data: [u8; 80] = FONT_DATA;
 
-        let start = 0x50;
+        let start = 0x00;
         let end = start + expected_font_data.len();
         assert_eq!(&cpu.memory[start..end], &expected_font_data);
     }
