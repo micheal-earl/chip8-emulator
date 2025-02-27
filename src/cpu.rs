@@ -5,6 +5,9 @@ type OpCode = u16;
 type Instruction = (u8, u8, u8, u8, u8, u16);
 // TODO consider type Display = [u8; 256], etc
 
+pub const WIDTH: usize = 64;
+pub const HEIGHT: usize = 32;
+
 // CHIP-8 fonts consist of 16 characters, each defined by 5 bytes.
 const FONT_DATA: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -25,8 +28,7 @@ const FONT_DATA: [u8; 80] = [
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 ];
 
-pub const WIDTH: usize = 64;
-pub const HEIGHT: usize = 32;
+const CLOCK_700HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1428);
 
 pub struct Cpu {
     registers: [u8; 16],
@@ -128,7 +130,7 @@ impl Cpu {
     pub fn run(&mut self) {
         // TODO: Make execution 700hz (double check this)
         // TODO: Add 60hz timer for sound and delay
-        let interval = time::Duration::from_micros(1);
+        let interval = CLOCK_700HZ_IN_MICROS;
         let mut next_time = time::Instant::now() + interval;
         loop {
             if self.program_counter >= 4095 {
