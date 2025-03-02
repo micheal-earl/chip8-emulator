@@ -108,9 +108,6 @@ pub struct Cpu {
     program_counter: usize,
 }
 
-// TODO: delete these or make V0 - VF into constants
-//const V0: u8 = 0u8;
-
 impl Default for Cpu {
     fn default() -> Self {
         let mut cpu = Self {
