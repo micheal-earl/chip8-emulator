@@ -72,10 +72,13 @@ impl TryFrom<u8> for RegisterLabel {
     }
 }
 
+/// CHIP-8 Display pixel width
 pub const WIDTH: usize = 64;
+
+/// CHIP-8 Display pixel height
 pub const HEIGHT: usize = 32;
 
-// CHIP-8 fonts consist of 16 characters, each defined by 5 bytes.
+/// CHIP-8 fonts consist of 16 characters, each defined by 5 bytes.
 const FONT_DATA: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -127,6 +130,7 @@ impl Default for Cpu {
 }
 
 impl Cpu {
+    /// Fetches the next instruction from memory at the program_counter address
     fn fetch(&mut self) -> OpCode {
         let pc = self.program_counter;
         let op_high_byte = self.memory[pc] as u16;
@@ -148,6 +152,7 @@ impl Cpu {
         op_high_byte << 8 | op_low_byte
     }
 
+    /// Decodes an OpCode into an instruction
     fn decode(opcode: OpCode) -> Instruction {
         // 0x73EE is an example OpCode
         // In this OpCode, 73 = High Byte, EE = Low Byte
@@ -191,35 +196,40 @@ impl Cpu {
                 _ => todo!("d not 4"),
             },
             (0xA, _, _, _) => self.ldi(nnn),
-            (0xD, _, _, _) => self.drw(RegisterLabel::try_from(x)?, RegisterLabel::try_from(y)?, d),
+            (0xD, _, _, _) => {
+                self.drw(RegisterLabel::try_from(x)?, RegisterLabel::try_from(y)?, d)?
+            }
             _ => todo!("catch all"),
         }
 
         Ok(())
     }
 
+    /// Runs the cpu, stepping through instructions until end of memory
     pub fn run(&mut self) -> Result<(), CpuError> {
-        // TODO: Make execution 700hz (double check this)
         // TODO: Add 60hz timer for sound and delay
         let interval = DURATION_700HZ_IN_MICROS;
-        let mut next_time = time::Instant::now() + interval;
+        let mut time_after_interval = time::Instant::now() + interval;
+
         loop {
             let s = self.step()?;
             if !s {
                 break;
             }
 
-            // TODO the sleep calculation uses next_time - time::Instant::now(),
-            // which might panic if the result is negative (if the CPU is busy)
-            // maybe clamp the duration to zero.
+            // Sleep until the next cycle
+            let now = time::Instant::now();
+            if now < time_after_interval {
+                thread::sleep(time_after_interval - now);
+            }
 
-            thread::sleep(next_time - time::Instant::now());
-            next_time += interval;
+            time_after_interval += interval;
         }
 
         Ok(())
     }
 
+    /// Steps the cpu forward one instruction
     pub fn step(&mut self) -> Result<bool, CpuError> {
         if self.program_counter >= 4095 {
             return Ok(false); // or return false if you want to exit
@@ -228,10 +238,10 @@ impl Cpu {
         let opcode = self.fetch();
         let instruction = Self::decode(opcode);
         self.execute(instruction)?;
+
         Ok(true)
     }
 
-    // TODO use API for manipulating cpu object even for private functions
     /// (00E0) CLEAR the display
     fn cls(&mut self) {
         self.display = [0; 256];
@@ -289,31 +299,37 @@ impl Cpu {
         self.program_counter = call_addr as usize;
     }
 
-    /// Helper to get the value of an individual pixel from the bit-packed display.
-    /// The display is stored as 256 u8’s, each holding 8 pixels.
-    /// `pixel` is the overall pixel index (0..2047).
-    fn get_display_pixel(&self, pixel_index: u16) -> u8 {
-        let byte_index = (pixel_index / 8) as usize;
-        let bit_index = 7 - (pixel_index % 8);
-        (self.display[byte_index] >> bit_index) & 1
+    // (7xkk) Add one registers contents to another registers contents
+    fn add_xy(&mut self, x: u8, y: u8) {
+        let arg1 = self.registers[x as usize];
+        let arg2 = self.registers[y as usize];
+
+        let (val, overflow) = arg1.overflowing_add(arg2);
+        self.registers[x as usize] = val;
+
+        if overflow {
+            self.registers[0xF] = 1;
+        } else {
+            self.registers[0xF] = 0;
+        }
     }
 
-    /// Display d-byte sprite starting at memory location I at (Vx, Vy).
-    /// Sprites are XOR’d onto the display.
-    /// If the sprite is partially off-screen, it is clipped (pixels outside are not drawn).
-    /// If the sprite is completely off-screen, it wraps around (the starting coordinate is modulo adjusted).
-    /// VF is set to 1 if any drawn pixel is erased.
-    fn drw(&mut self, vx: RegisterLabel, vy: RegisterLabel, d: u8) {
+    /// Display d-byte sprite starting at memory location I at (Vx, Vy)  
+    /// Sprites are XOR’d onto the display  
+    /// If the sprite is partially off-screen, it is clipped (pixels outside are not drawn)  
+    /// If the sprite is completely off-screen, it wraps around  
+    /// VF is set to 1 if any drawn pixel is erased  
+    fn drw(&mut self, vx: RegisterLabel, vy: RegisterLabel, d: u8) -> Result<(), CpuError> {
         // Get the original coordinates from registers.
-        let orig_x = self.read_register(vx).unwrap() as usize;
-        let orig_y = self.read_register(vy).unwrap() as usize;
+        let orig_x = self.read_register(vx)? as usize;
+        let orig_y = self.read_register(vy)? as usize;
         let height = d as usize;
 
         // Determine if the entire sprite is off-screen:
-        // We consider it "entirely off-screen" if the starting coordinate is not in bounds.
+        // We consider it "entirely off-screen" if the starting coordinate is not in bounds
         let wrap = (orig_x >= WIDTH) || (orig_y >= HEIGHT);
 
-        // If wrapping, adjust coordinates by modulo; otherwise, keep them for clipping.
+        // If wrapping, adjust coordinates by modulo; otherwise, keep them for clipping
         let x_coord = if wrap { orig_x % WIDTH } else { orig_x };
         let y_coord = if wrap { orig_y % HEIGHT } else { orig_y };
 
@@ -323,7 +339,7 @@ impl Cpu {
 
         // For each row of the sprite.
         for row in 0..height {
-            // In clipping mode, skip rows that fall outside.
+            // In clipping mode, skip rows that fall outside
             if !wrap && (y_coord + row >= HEIGHT) {
                 continue;
             }
@@ -331,14 +347,14 @@ impl Cpu {
 
             // Each sprite row is 8 pixels wide.
             for col in 0..8 {
-                // In clipping mode, skip columns that fall outside.
+                // In clipping mode, skip columns that fall outside
                 if !wrap && (x_coord + col >= WIDTH) {
                     continue;
                 }
 
                 let sprite_pixel = (sprite_byte >> (7 - col)) & 1;
                 if sprite_pixel == 1 {
-                    // For wrapping mode, calculate coordinates modulo WIDTH/HEIGHT.
+                    // For wrapping mode, calculate coordinates modulo WIDTH/HEIGHT
                     let draw_x = if wrap {
                         (x_coord + col) % WIDTH
                     } else {
@@ -356,28 +372,24 @@ impl Cpu {
                     if current_pixel == 1 && new_pixel == 0 {
                         self.registers[0xF] = 1;
                     }
-                    self.write_display(pixel_index, new_pixel == 1);
+                    self.write_display(pixel_index, new_pixel == 1)?;
                 }
             }
         }
+
+        Ok(())
     }
 
-    // (7xkk) Add one registers contents to another registers contents
-    fn add_xy(&mut self, x: u8, y: u8) {
-        let arg1 = self.registers[x as usize];
-        let arg2 = self.registers[y as usize];
-
-        let (val, overflow) = arg1.overflowing_add(arg2);
-        self.registers[x as usize] = val;
-
-        if overflow {
-            self.registers[0xF] = 1;
-        } else {
-            self.registers[0xF] = 0;
-        }
+    /// Helper to get the value of an individual pixel from the bit-packed display  
+    /// The display is stored as 256 u8’s, each holding 8 pixels  
+    /// `pixel` is the overall pixel index (0..2047)  
+    fn get_display_pixel(&self, pixel_index: u16) -> u8 {
+        let byte_index = (pixel_index / 8) as usize;
+        let bit_index = 7 - (pixel_index % 8);
+        (self.display[byte_index] >> bit_index) & 1
     }
 
-    pub fn write_display(&mut self, pixel_index: u16, value: bool) {
+    pub fn write_display(&mut self, pixel_index: u16, value: bool) -> Result<(), CpuError> {
         // Calculate which byte holds the pixel.
         let byte_index = (pixel_index / 8) as usize;
         // Calculate the bit position within that byte.
@@ -386,8 +398,7 @@ impl Cpu {
 
         // Check if the byte index is valid for our display buffer.
         if byte_index >= self.display.len() {
-            // TODO add error
-            return;
+            return Err("Byte index out of bounds of display buffer.");
         }
 
         if value {
@@ -397,16 +408,30 @@ impl Cpu {
             // Clear the bit to 0 to turn the pixel off.
             self.display[byte_index] &= !(1 << bit_index);
         }
+
+        Ok(())
     }
 
+    /// Read the address in the index (I) register
+    pub fn read_index_register(&self) -> &Register16 {
+        todo!()
+    }
+
+    /// Return a reference to the display memory region
     pub fn read_display(&self) -> &Display {
         &self.display
     }
 
-    pub fn read_register(&self, register_label: RegisterLabel) -> Option<Register> {
-        self.registers.get(register_label as usize).copied()
+    /// Returns a copy of the value stored in the provided register
+    pub fn read_register(&self, register_label: RegisterLabel) -> Result<Register, CpuError> {
+        if let Some(value) = self.registers.get(register_label as usize).copied() {
+            Ok(value)
+        } else {
+            Err("Out of bounds")
+        }
     }
 
+    /// Write a new value to Vx
     pub fn write_register(
         &mut self,
         register_label: RegisterLabel,
@@ -423,10 +448,16 @@ impl Cpu {
         }
     }
 
-    pub fn read_memory(&self, address: Address) -> Option<Register> {
-        self.memory.get(address as usize).copied()
+    /// Returns a copy of the value stored in the provided memory address
+    pub fn read_memory(&self, address: Address) -> Result<Register, CpuError> {
+        if let Some(value) = self.memory.get(address as usize).copied() {
+            Ok(value)
+        } else {
+            Err("Out of bounds")
+        }
     }
 
+    /// Write a new value to a memory location
     pub fn write_memory(&mut self, address: Address, value: u8) -> Result<(), CpuError> {
         let index = address as usize;
         if index < self.memory.len() {
@@ -437,6 +468,7 @@ impl Cpu {
         }
     }
 
+    /// Write multiple new values to several memory locations
     pub fn write_memory_batch(
         &mut self,
         addresses_and_values: &[(Address, u8)],
@@ -447,6 +479,7 @@ impl Cpu {
         Ok(())
     }
 
+    /// Write an opcode to memory. Opcodes are 2 registers long
     pub fn write_opcode(&mut self, address: Address, opcode: OpCode) -> Result<(), CpuError> {
         let index = address as usize;
         if index % 2 != 0 {
@@ -470,6 +503,7 @@ impl Cpu {
         Ok(())
     }
 
+    /// Write multiple opcodes to memory at several memory locations
     fn write_fonts_to_memory(&mut self) {
         // The font data occupies 80 bytes starting at memory address 0x000.
         // We don't use write_memory_batch here as that would be slower
@@ -482,8 +516,6 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // TODO comments on tests
 
     #[test]
     fn add_xy_operation() -> Result<(), CpuError> {
@@ -516,7 +548,7 @@ mod tests {
     fn add_operation() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 
-        // Set an initial value in register V1.
+        // Set an initial value in register V1
         cpu.write_register(RegisterLabel::V1, 20)?;
 
         let opcodes = [
@@ -619,8 +651,6 @@ mod tests {
         Ok(())
     }
 
-    // TODO write methods to read display and I
-    // or maybe just use get_display_pixel to read display?
     #[test]
     fn drw_operation_height_1() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
@@ -642,36 +672,38 @@ mod tests {
         ];
         cpu.write_opcode_batch(&opcodes)?;
         // Write sprite data into memory at 0x300:
-        // Sprite: 0x81 -> 0b10000001, so pixel at column 0 and 7 are on.
+        // Sprite: 0x81 -> 0b10000001, so pixel at column 0 and 7 are on
         cpu.write_memory(0x300, 0x81)?;
 
         cpu.run()?;
 
-        // Verify that the sprite was drawn correctly.
+        // Verify that the sprite was drawn correctly
         // Check pixel at (0,0):
-        let pixel_index = 0u16; // row 0, col 0
-        let byte_index = (pixel_index / 8) as usize;
-        let bit_index = 7 - (pixel_index % 8);
-        let pixel0 = (cpu.display[byte_index] >> bit_index) & 1;
-        assert_eq!(pixel0, 1, "Pixel at (0,0) should be on");
+        assert_eq!(
+            cpu.get_display_pixel(0u16),
+            1,
+            "Pixel at (0,0) should be on"
+        );
 
         // Check pixel at (7,0):
-        let pixel_index = 7u16; // row 0, col 7
-        let byte_index = (pixel_index / 8) as usize;
-        let bit_index = 7 - (pixel_index % 8);
-        let pixel7 = (cpu.display[byte_index] >> bit_index) & 1;
-        assert_eq!(pixel7, 1, "Pixel at (7,0) should be on");
+        assert_eq!(
+            cpu.get_display_pixel(7u16),
+            1,
+            "Pixel at (7,0) should be on"
+        );
 
-        // Verify pixels in between (columns 1 through 6) are off.
+        // Verify pixels in between (columns 1 through 6) are off
         for col in 1..7 {
             let pixel_index = col as u16; // row 0, col = col
-            let byte_index = (pixel_index / 8) as usize;
-            let bit_index = 7 - (pixel_index % 8);
-            let pixel = (cpu.display[byte_index] >> bit_index) & 1;
-            assert_eq!(pixel, 0, "Pixel at ({},0) should be off", col);
+            assert_eq!(
+                cpu.get_display_pixel(pixel_index),
+                0,
+                "Pixel at ({},0) should be off",
+                col
+            );
         }
 
-        // The collision flag (VF) should remain 0.
+        // The collision flag (VF) should remain 0
         assert_eq!(
             cpu.read_register(RegisterLabel::VF).unwrap(),
             0,
@@ -685,12 +717,12 @@ mod tests {
         let mut cpu = Cpu::default();
 
         // Program:
-        // 00E0: CLS              (clear the screen)
+        // 00E0: CLS             (clear the screen)
         // 600A: LD V0, 10       (set V0 = 10; x-coordinate)
         // 6105: LD V1, 5        (set V1 = 5; y-coordinate)
         // A300: LDI 0x300       (set I = 0x300)
         // D013: DRW V0,V1,3     (draw 3-byte sprite at (V0,V1))
-        // 1FFF: JP 0xFFF       (halt)
+        // 1FFF: JP 0xFFF        (halt)
         let opcodes = [
             (0x0200, 0x00E0), // CLS
             (0x0202, 0x600A), // LD V0, 10
@@ -723,13 +755,12 @@ mod tests {
                 let pixel_x = (10 + col) % WIDTH;
                 let pixel_y = (5 + row) % HEIGHT;
                 let pixel_index = (pixel_y * WIDTH + pixel_x) as u16;
-                let byte_index = (pixel_index / 8) as usize;
-                let bit_index = 7 - (pixel_index % 8);
-                let pixel_val = (cpu.display[byte_index] >> bit_index) & 1;
                 assert_eq!(
-                    pixel_val, expected[row][col],
+                    cpu.get_display_pixel(pixel_index),
+                    expected[row][col],
                     "Mismatch at row {} col {}",
-                    row, col
+                    row,
+                    col
                 );
             }
         }
@@ -764,12 +795,12 @@ mod tests {
         cpu.write_opcode_batch(&opcodes)?;
 
         // Write sprite data: one byte sprite: 0xFF (all 8 pixels on)
-        // When drawn at (60,5) on a 64-wide display, only pixels at x=60..63 should be drawn.
+        // When drawn at (60,5) on a 64-wide display, only pixels at x=60..63 should be drawn
         cpu.write_memory(0x300, 0xFF)?;
 
         cpu.run()?;
 
-        // For row 5, check that only columns 60 to 63 are on, and all other columns are off.
+        // For row 5, check that only columns 60 to 63 are on, and all other columns are off
         for x in 0..WIDTH {
             let pixel_index = (5 * WIDTH + x) as u16;
             let pixel = cpu.get_display_pixel(pixel_index);
@@ -814,20 +845,20 @@ mod tests {
         cpu.run()?;
 
         // Since V0=70, wrapping yields 70 % 64 = 6.
-        // For row 10, we expect columns 6..13 to be drawn (with no clipping since 13 < 64).
+        // For row 10, we expect columns 6..13 to be drawn (with no clipping since 13 < 64)
         for x in 6..14 {
             let pixel_index = (10 * WIDTH + x) as u16;
             let pixel = cpu.get_display_pixel(pixel_index);
             assert_eq!(pixel, 1, "Pixel at ({},10) should be on due to wrapping", x);
         }
-        // Also check that a pixel outside the drawn region remains off.
+        // Also check that a pixel outside the drawn region remains off
         let outside_index = (10 * WIDTH + 5) as u16;
         assert_eq!(
             cpu.get_display_pixel(outside_index),
             0,
             "Pixel at (5,10) should be off"
         );
-        // Collision flag should be 0.
+        // Collision flag should be 0
         assert_eq!(
             cpu.read_register(RegisterLabel::VF).unwrap(),
             0,
