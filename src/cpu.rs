@@ -1,9 +1,76 @@
 use std::thread;
 use std::time;
 
+/// An OpCode is 16 bits. These bits determine what the cpu executes.
 type OpCode = u16;
+
+/// An Instruction is a decoded OpCode.
 type Instruction = (u8, u8, u8, u8, u8, u16);
-// TODO consider type Display = [u8; 256], etc
+
+/// A Register is a memory location containing 8 bits.
+type Register = u8;
+
+/// A Register16 is a memory location containing 16 bits.
+/// This register type is commonly used to store addresses.
+type Register16 = u16;
+
+/// An address is a pointer value stored in a Register16.
+/// Addresses are actually only 12 bits.
+type Address = u16;
+
+/// The Display is a memory region storing bits for the CHIP-8 pixel buffer.
+type Display = [Register; 256];
+
+// TODO Replace with proper error
+/// Placeholder type for errors
+pub type CpuError = &'static str;
+
+/// The CHIP-8 describes the 16 u8 registers using Vx where x is the register index.
+#[repr(u16)]
+pub enum RegisterLabel {
+    V0 = 0x0,
+    V1 = 0x1,
+    V2 = 0x2,
+    V3 = 0x3,
+    V4 = 0x4,
+    V5 = 0x5,
+    V6 = 0x6,
+    V7 = 0x7,
+    V8 = 0x8,
+    V9 = 0x9,
+    VA = 0xA,
+    VB = 0xB,
+    VC = 0xC,
+    VD = 0xD,
+    VE = 0xE,
+    VF = 0xF,
+}
+
+impl TryFrom<u8> for RegisterLabel {
+    type Error = CpuError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(RegisterLabel::V0),
+            1 => Ok(RegisterLabel::V1),
+            2 => Ok(RegisterLabel::V2),
+            3 => Ok(RegisterLabel::V3),
+            4 => Ok(RegisterLabel::V4),
+            5 => Ok(RegisterLabel::V5),
+            6 => Ok(RegisterLabel::V6),
+            7 => Ok(RegisterLabel::V7),
+            8 => Ok(RegisterLabel::V8),
+            9 => Ok(RegisterLabel::V9),
+            10 => Ok(RegisterLabel::VA),
+            11 => Ok(RegisterLabel::VB),
+            12 => Ok(RegisterLabel::VC),
+            13 => Ok(RegisterLabel::VD),
+            14 => Ok(RegisterLabel::VE),
+            15 => Ok(RegisterLabel::VF),
+            _ => Err("Invalid register value"),
+        }
+    }
+}
 
 pub const WIDTH: usize = 64;
 pub const HEIGHT: usize = 32;
@@ -32,11 +99,11 @@ pub const DURATION_700HZ_IN_MICROS: time::Duration = time::Duration::from_micros
 pub const DURATION_1HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1_000_000);
 
 pub struct Cpu {
-    registers: [u8; 16],
-    memory: [u8; 4096],
-    stack: [u16; 16],
-    display: [u8; 256], //[[u8; 64]; 32],
-    index: u16,
+    registers: [Register; 16],
+    memory: [Register; 4096],
+    stack: [Register16; 16],
+    display: Display, //[[u8; 64]; 32],
+    index: Register16,
     stack_pointer: usize,
     program_counter: usize,
 }
@@ -109,36 +176,38 @@ impl Cpu {
         (c, x, y, d, kk, nnn)
     }
 
-    fn execute(&mut self, decoded: Instruction) {
+    fn execute(&mut self, decoded: Instruction) -> Result<(), CpuError> {
         let (c, x, y, d, kk, nnn) = decoded;
         match (c, x, y, d) {
-            (0x0, 0x0, 0x0, 0x0) => return,     // 0000
-            (0x0, 0x0, 0xE, 0x0) => self.cls(), // 00E0 Clear the screen
-            (0x0, 0x0, 0xE, 0xE) => self.ret(), // 00EE Return from subroutine
-            (0x1, _, _, _) => self.jmp(nnn),    // 1nnn Jump to location nnn
-            (0x2, _, _, _) => self.call(nnn),   // Call subroutine at location nnn
-            (0x3, _, _, _) => self.se(x, kk),   // 3xkk Skip next instruction if Vx == kk
-            (0x4, _, _, _) => self.sne(x, kk),  // 4xkk Skip next instruvtion if Vx != kk
-            (0x5, _, _, 0x0) => self.se(x, y),  // 5xy0 Skip next instruction if Vx == Vy
-            (0x6, _, _, _) => self.ld(x, kk),   // 6xkk Write kk to Vx
-            (0x7, _, _, _) => self.add(x, kk),  // 7xkk Add kk to Vx, write result to Vx
+            (0x0, 0x0, 0x0, 0x0) => return Ok(()), // 0000
+            (0x0, 0x0, 0xE, 0x0) => self.cls(),    // 00E0 Clear the screen
+            (0x0, 0x0, 0xE, 0xE) => self.ret(),    // 00EE Return from subroutine
+            (0x1, _, _, _) => self.jmp(nnn),       // 1nnn Jump to location nnn
+            (0x2, _, _, _) => self.call(nnn),      // Call subroutine at location nnn
+            (0x3, _, _, _) => self.se(x, kk),      // 3xkk Skip next instruction if Vx == kk
+            (0x4, _, _, _) => self.sne(x, kk),     // 4xkk Skip next instruvtion if Vx != kk
+            (0x5, _, _, 0x0) => self.se(x, y),     // 5xy0 Skip next instruction if Vx == Vy
+            (0x6, _, _, _) => self.ld(x, kk),      // 6xkk Write kk to Vx
+            (0x7, _, _, _) => self.add(x, kk),     // 7xkk Add kk to Vx, write result to Vx
             (0x8, _, _, _) => match d {
                 4 => self.add_xy(x, y),
                 _ => todo!("d not 4"),
             },
             (0xA, _, _, _) => self.ldi(nnn),
-            (0xD, _, _, _) => self.drw(x, y, d),
+            (0xD, _, _, _) => self.drw(RegisterLabel::try_from(x)?, RegisterLabel::try_from(y)?, d),
             _ => todo!("catch all"),
         }
+
+        Ok(())
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> Result<(), CpuError> {
         // TODO: Make execution 700hz (double check this)
         // TODO: Add 60hz timer for sound and delay
         let interval = DURATION_700HZ_IN_MICROS;
         let mut next_time = time::Instant::now() + interval;
         loop {
-            let s = self.step();
+            let s = self.step()?;
             if !s {
                 break;
             }
@@ -150,17 +219,19 @@ impl Cpu {
             thread::sleep(next_time - time::Instant::now());
             next_time += interval;
         }
+
+        Ok(())
     }
 
-    pub fn step(&mut self) -> bool {
+    pub fn step(&mut self) -> Result<bool, CpuError> {
         if self.program_counter >= 4095 {
-            return false; // or return false if you want to exit
+            return Ok(false); // or return false if you want to exit
         }
 
         let opcode = self.fetch();
         let instruction = Self::decode(opcode);
-        self.execute(instruction);
-        true
+        self.execute(instruction)?;
+        Ok(true)
     }
 
     // TODO use API for manipulating cpu object even for private functions
@@ -224,9 +295,9 @@ impl Cpu {
     /// Helper to get the value of an individual pixel from the bit-packed display.
     /// The display is stored as 256 u8’s, each holding 8 pixels.
     /// `pixel` is the overall pixel index (0..2047).
-    fn get_display_pixel(&self, pixel: u16) -> u8 {
-        let byte_index = (pixel / 8) as usize;
-        let bit_index = 7 - (pixel % 8);
+    fn get_display_pixel(&self, pixel_index: u16) -> u8 {
+        let byte_index = (pixel_index / 8) as usize;
+        let bit_index = 7 - (pixel_index % 8);
         (self.display[byte_index] >> bit_index) & 1
     }
 
@@ -235,10 +306,10 @@ impl Cpu {
     /// If the sprite is partially off-screen, it is clipped (pixels outside are not drawn).
     /// If the sprite is completely off-screen, it wraps around (the starting coordinate is modulo adjusted).
     /// VF is set to 1 if any drawn pixel is erased.
-    fn drw(&mut self, x: u8, y: u8, d: u8) {
+    fn drw(&mut self, vx: RegisterLabel, vy: RegisterLabel, d: u8) {
         // Get the original coordinates from registers.
-        let orig_x = self.read_register(x).unwrap() as usize;
-        let orig_y = self.read_register(y).unwrap() as usize;
+        let orig_x = self.read_register(vx).unwrap() as usize;
+        let orig_y = self.read_register(vy).unwrap() as usize;
         let height = d as usize;
 
         // Determine if the entire sprite is off-screen:
@@ -309,12 +380,12 @@ impl Cpu {
         }
     }
 
-    pub fn write_display(&mut self, pixel: u16, value: bool) {
+    pub fn write_display(&mut self, pixel_index: u16, value: bool) {
         // Calculate which byte holds the pixel.
-        let byte_index = (pixel / 8) as usize;
+        let byte_index = (pixel_index / 8) as usize;
         // Calculate the bit position within that byte.
         // We assume bit 7 is the leftmost pixel, so we subtract the remainder from 7.
-        let bit_index = 7 - (pixel % 8);
+        let bit_index = 7 - (pixel_index % 8);
 
         // Check if the byte index is valid for our display buffer.
         if byte_index >= self.display.len() {
@@ -331,66 +402,73 @@ impl Cpu {
         }
     }
 
-    pub fn read_display(&self) -> &[u8; 256] {
+    pub fn read_display(&self) -> &Display {
         &self.display
     }
 
-    pub fn read_register(&self, address: u8) -> Option<u8> {
-        self.registers.get(address as usize).copied()
+    pub fn read_register(&self, register_label: RegisterLabel) -> Option<Register> {
+        self.registers.get(register_label as usize).copied()
     }
 
-    pub fn write_register(&mut self, address: u8, val: u8) -> Result<(), &'static str> {
-        let address_usize = address as usize;
-        if address_usize < self.registers.len() {
-            self.registers[address_usize] = val;
+    pub fn write_register(
+        &mut self,
+        register_label: RegisterLabel,
+        value: u8,
+    ) -> Result<(), CpuError> {
+        let register_label_as_usize = register_label as usize;
+        let register_is_in_bounds = register_label_as_usize < self.registers.len();
+
+        if register_is_in_bounds {
+            self.registers[register_label_as_usize] = value;
             Ok(())
         } else {
             Err("Register index out of bounds")
         }
     }
 
-    pub fn read_memory(&self, address: u8) -> Option<u8> {
+    pub fn read_memory(&self, address: Address) -> Option<Register> {
         self.memory.get(address as usize).copied()
     }
 
-    pub fn write_memory(&mut self, address: u16, val: u8) -> Result<(), &'static str> {
+    pub fn write_memory(&mut self, address: Address, value: u8) -> Result<(), CpuError> {
         let index = address as usize;
         if index < self.memory.len() {
-            self.memory[index] = val;
+            self.memory[index] = value;
             Ok(())
         } else {
             Err("Memory address out of bounds")
         }
     }
 
-    pub fn write_memory_batch(&mut self, writes: &[(u16, u8)]) -> Result<(), &'static str> {
-        for &(address, value) in writes {
+    pub fn write_memory_batch(
+        &mut self,
+        addresses_and_values: &[(Address, u8)],
+    ) -> Result<(), CpuError> {
+        for &(address, value) in addresses_and_values {
             self.write_memory(address, value)?;
         }
         Ok(())
     }
 
-    pub fn write_instruction(
-        &mut self,
-        address: u16,
-        instruction: u16,
-    ) -> Result<(), &'static str> {
+    pub fn write_opcode(&mut self, address: Address, opcode: OpCode) -> Result<(), CpuError> {
         let index = address as usize;
+        if index % 2 != 0 {
+            return Err(
+                "Cannot insert opcode at odd memory address. Opcodes are 2 registers long.",
+            );
+        }
         if index + 1 >= self.memory.len() {
             return Err("Memory address out of bounds");
         }
         // Split the instruction into high and low bytes.
-        self.memory[index] = (instruction >> 8) as u8;
-        self.memory[index + 1] = (instruction & 0xFF) as u8;
+        self.memory[index] = (opcode >> 8) as u8;
+        self.memory[index + 1] = (opcode & 0xFF) as u8;
         Ok(())
     }
 
-    pub fn write_instructions_batch(
-        &mut self,
-        instructions: &[(u16, u16)],
-    ) -> Result<(), &'static str> {
-        for &(address, instruction) in instructions {
-            self.write_instruction(address, instruction)?;
+    pub fn write_opcode_batch(&mut self, opcodes: &[(Address, OpCode)]) -> Result<(), CpuError> {
+        for &(address, opcode) in opcodes {
+            self.write_opcode(address, opcode)?;
         }
         Ok(())
     }
@@ -411,83 +489,85 @@ mod tests {
     // TODO comments on tests
 
     #[test]
-    fn add_xy_operation() -> Result<(), &'static str> {
+    fn add_xy_operation() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 
         // Write initial register values
-        cpu.write_register(0x0000, 5)?;
-        cpu.write_register(0x0001, 10)?;
-        cpu.write_register(0x0002, 15)?;
-        cpu.write_register(0x0003, 7)?;
+        cpu.write_register(RegisterLabel::V0, 5)?;
+        cpu.write_register(RegisterLabel::V1, 10)?;
+        cpu.write_register(RegisterLabel::V2, 15)?;
+        cpu.write_register(RegisterLabel::V3, 7)?;
 
         // Write opcodes into memory using write_memory_batch.
-        let instructions = [
+        let opcodes = [
             (0x0200, 0x8014), // 8014: ADD V1 to V0
             (0x0202, 0x8024), // 8024: ADD V2 to V0
             (0x0204, 0x8034), // 8034: ADD V3 to V0
+            (0x0206, 0x1FFF), // 1nnn Jump to 0xFFF
         ];
 
-        cpu.write_instructions_batch(&instructions)?;
+        cpu.write_opcode_batch(&opcodes)?;
 
-        cpu.run();
+        cpu.run()?;
 
-        assert_eq!(cpu.read_register(0).unwrap(), 37);
+        assert_eq!(cpu.read_register(RegisterLabel::V0).unwrap(), 37);
 
         Ok(())
     }
 
     #[test]
-    fn add_operation() -> Result<(), &'static str> {
+    fn add_operation() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 
         // Set an initial value in register V1.
-        cpu.write_register(1, 20)?;
+        cpu.write_register(RegisterLabel::V1, 20)?;
 
-        let instructions = [
+        let opcodes = [
             (0x0200, 0x7105), // 7xkk Add 0x05 to register V1 (20 + 5 = 25)
             (0x0202, 0x1FFF), // 1nnn Jump to 0xFFF
         ];
 
-        cpu.write_instructions_batch(&instructions)?;
+        cpu.write_opcode_batch(&opcodes)?;
 
-        cpu.run();
+        cpu.run()?;
 
         // Verify that register V1 now holds the value 25.
-        assert_eq!(cpu.read_register(1).unwrap(), 25);
+        assert_eq!(cpu.read_register(RegisterLabel::V1).unwrap(), 25);
 
         Ok(())
     }
 
     #[test]
-    fn jump_operation() -> Result<(), &'static str> {
+    fn jump_operation() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 
-        cpu.write_register(0x0000, 5)?;
-        cpu.write_register(0x0001, 7)?;
+        cpu.write_register(RegisterLabel::V0, 5)?;
+        cpu.write_register(RegisterLabel::V1, 7)?;
 
-        let instructions = [
+        let opcodes = [
             (0x0200, 0x1300), // 1nnn JUMP to nnn
             (0x0300, 0x8014), // 8014 ADD V1 to V0
+            (0x0302, 0x1FFF), // 1nnn JUMP to nnn, in this case 0xFFF is the end of memory
         ];
 
-        cpu.write_instructions_batch(&instructions)?;
+        cpu.write_opcode_batch(&opcodes)?;
 
-        cpu.run();
+        cpu.run()?;
 
-        assert_eq!(cpu.read_register(0).unwrap(), 12);
+        assert_eq!(cpu.read_register(RegisterLabel::V0).unwrap(), 12);
 
         Ok(())
     }
 
     #[test]
-    fn call_and_ret_operations() -> Result<(), &'static str> {
+    fn call_and_ret_operations() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 
         // Write initial register values
-        cpu.write_register(0x0000, 5)?;
-        cpu.write_register(0x0001, 10)?;
+        cpu.write_register(RegisterLabel::V0, 5)?;
+        cpu.write_register(RegisterLabel::V1, 10)?;
 
-        let instructions = [
+        let opcodes = [
             (0x0200, 0x2300), // 2nnn CALL subroutine at addr 0x300
             (0x0202, 0x2300), // 2nnn CALL subroutine at addr 0x300
             (0x0204, 0x1FFF), // 1nnn JUMP to nnn, in this case 0xFFF is the end of memory
@@ -497,45 +577,45 @@ mod tests {
             (0x0304, 0x00EE), // RETURN
         ];
 
-        cpu.write_instructions_batch(&instructions)?;
+        cpu.write_opcode_batch(&opcodes)?;
 
-        cpu.run();
+        cpu.run()?;
 
-        assert_eq!(cpu.read_register(0).unwrap(), 45);
+        assert_eq!(cpu.read_register(RegisterLabel::V0).unwrap(), 45);
 
         Ok(())
     }
 
     #[test]
-    fn ld_operation() -> Result<(), &'static str> {
+    fn ld_operation() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 
-        let instructions = [
+        let opcodes = [
             (0x0200, 0x63AB), // 6xkk load V3 with 0xAB.
             (0x0202, 0x1FFF), // 1nnn jump to 0xFFF
         ];
 
-        cpu.write_instructions_batch(&instructions)?;
+        cpu.write_opcode_batch(&opcodes)?;
 
-        cpu.run();
+        cpu.run()?;
 
-        assert_eq!(cpu.read_register(3).unwrap(), 0xAB);
+        assert_eq!(cpu.read_register(RegisterLabel::V3).unwrap(), 0xAB);
 
         Ok(())
     }
 
     #[test]
-    fn ldi_operation() -> Result<(), &'static str> {
+    fn ldi_operation() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 
-        let instructions = [
+        let opcodes = [
             (0x0200, 0xA123), // Annn load I register with 0x123
             (0x0202, 0x1FFF), // 1nnn jump to 0xFFF
         ];
 
-        cpu.write_instructions_batch(&instructions)?;
+        cpu.write_opcode_batch(&opcodes)?;
 
-        cpu.run();
+        cpu.run()?;
 
         assert_eq!(cpu.index, 0x123);
 
@@ -545,7 +625,7 @@ mod tests {
     // TODO write methods to read display and I
     // or maybe just use get_display_pixel to read display?
     #[test]
-    fn drw_operation_height_1() -> Result<(), &'static str> {
+    fn drw_operation_height_1() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 
         // Program:
@@ -555,7 +635,7 @@ mod tests {
         // A300: LDI 0x300       (set index register I = 0x300)
         // D011: DRW V0,V1,1     (draw 1-byte sprite at (V0,V1))
         // 1FFF: JP 0xFFF       (jump to exit)
-        let instructions = [
+        let opcodes = [
             (0x0200, 0x00E0), // CLS
             (0x0202, 0x6000), // LD V0, 0
             (0x0204, 0x6100), // LD V1, 0
@@ -563,12 +643,12 @@ mod tests {
             (0x0208, 0xD011), // DRW V0,V1,1
             (0x020A, 0x1FFF), // JP 0xFFF (halt)
         ];
-        cpu.write_instructions_batch(&instructions)?;
+        cpu.write_opcode_batch(&opcodes)?;
         // Write sprite data into memory at 0x300:
         // Sprite: 0x81 -> 0b10000001, so pixel at column 0 and 7 are on.
         cpu.write_memory(0x300, 0x81)?;
 
-        cpu.run();
+        cpu.run()?;
 
         // Verify that the sprite was drawn correctly.
         // Check pixel at (0,0):
@@ -596,7 +676,7 @@ mod tests {
 
         // The collision flag (VF) should remain 0.
         assert_eq!(
-            cpu.read_register(0xF).unwrap(),
+            cpu.read_register(RegisterLabel::VF).unwrap(),
             0,
             "VF should be 0 for height 1 sprite"
         );
@@ -604,7 +684,7 @@ mod tests {
     }
 
     #[test]
-    fn drw_operation_height_3() -> Result<(), &'static str> {
+    fn drw_operation_height_3() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 
         // Program:
@@ -614,7 +694,7 @@ mod tests {
         // A300: LDI 0x300       (set I = 0x300)
         // D013: DRW V0,V1,3     (draw 3-byte sprite at (V0,V1))
         // 1FFF: JP 0xFFF       (halt)
-        let instructions = [
+        let opcodes = [
             (0x0200, 0x00E0), // CLS
             (0x0202, 0x600A), // LD V0, 10
             (0x0204, 0x6105), // LD V1, 5
@@ -622,7 +702,7 @@ mod tests {
             (0x0208, 0xD013), // DRW V0,V1,3
             (0x020A, 0x1FFF), // JP 0xFFF (halt)
         ];
-        cpu.write_instructions_batch(&instructions)?;
+        cpu.write_opcode_batch(&opcodes)?;
         // Write sprite data into memory at 0x300:
         // Row 0: 0x3C -> 0b00111100
         // Row 1: 0x42 -> 0b01000010
@@ -631,7 +711,7 @@ mod tests {
         cpu.write_memory(0x301, 0x42)?;
         cpu.write_memory(0x302, 0x81)?;
 
-        cpu.run();
+        cpu.run()?;
 
         // Expected pattern for the drawn sprite (8 pixels per row)
         let expected = [
@@ -659,14 +739,14 @@ mod tests {
 
         // Collision flag (VF) should be 0 since no pixels were erased
         assert_eq!(
-            cpu.read_register(0xF).unwrap(),
+            cpu.read_register(RegisterLabel::VF).unwrap(),
             0,
             "VF should be 0 for height 3 sprite"
         );
         Ok(())
     }
     #[test]
-    fn drw_operation_edge_clipping() -> Result<(), &'static str> {
+    fn drw_operation_edge_clipping() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 
         // Program:
@@ -676,7 +756,7 @@ mod tests {
         // A300: LDI 0x300       (set index register I = 0x300)
         // D011: DRW V0,V1,1     (draw 1-byte sprite at (V0,V1))
         // 1FFF: JP 0xFFF       (halt)
-        let instructions = [
+        let opcodes = [
             (0x0200, 0x00E0), // CLS
             (0x0202, 0x603C), // LD V0, 60    (0x6000 | 60 = 0x603C)
             (0x0204, 0x6105), // LD V1, 5     (0x6100 | 5  = 0x6105)
@@ -684,13 +764,13 @@ mod tests {
             (0x0208, 0xD011), // DRW V0,V1,1
             (0x020A, 0x1FFF), // JP 0xFFF (halt)
         ];
-        cpu.write_instructions_batch(&instructions)?;
+        cpu.write_opcode_batch(&opcodes)?;
 
         // Write sprite data: one byte sprite: 0xFF (all 8 pixels on)
         // When drawn at (60,5) on a 64-wide display, only pixels at x=60..63 should be drawn.
         cpu.write_memory(0x300, 0xFF)?;
 
-        cpu.run();
+        cpu.run()?;
 
         // For row 5, check that only columns 60 to 63 are on, and all other columns are off.
         for x in 0..WIDTH {
@@ -704,7 +784,7 @@ mod tests {
         }
         // Collision flag should be 0.
         assert_eq!(
-            cpu.read_register(0xF).unwrap(),
+            cpu.read_register(RegisterLabel::VF).unwrap(),
             0,
             "VF should be 0 when clipping without collision"
         );
@@ -712,7 +792,7 @@ mod tests {
     }
 
     #[test]
-    fn drw_operation_wrapping() -> Result<(), &'static str> {
+    fn drw_operation_wrapping() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 
         // Program:
@@ -722,7 +802,7 @@ mod tests {
         // A300: LDI 0x300       (set index register I = 0x300)
         // D011: DRW V0,V1,1     (draw 1-byte sprite at (V0,V1) – should wrap horizontally)
         // 1FFF: JP 0xFFF       (halt)
-        let instructions = [
+        let opcodes = [
             (0x0200, 0x00E0),      // CLS
             (0x0202, 0x6000 | 70), // LD V0, 70  (70 decimal)
             (0x0204, 0x6100 | 10), // LD V1, 10 (10 decimal)
@@ -730,11 +810,11 @@ mod tests {
             (0x0208, 0xD011),      // DRW V0,V1,1
             (0x020A, 0x1FFF),      // JP 0xFFF (halt)
         ];
-        cpu.write_instructions_batch(&instructions)?;
+        cpu.write_opcode_batch(&opcodes)?;
         // Write sprite data: one byte sprite: 0xFF (all 8 pixels on).
         cpu.write_memory(0x300, 0xFF)?;
 
-        cpu.run();
+        cpu.run()?;
 
         // Since V0=70, wrapping yields 70 % 64 = 6.
         // For row 10, we expect columns 6..13 to be drawn (with no clipping since 13 < 64).
@@ -752,7 +832,7 @@ mod tests {
         );
         // Collision flag should be 0.
         assert_eq!(
-            cpu.read_register(0xF).unwrap(),
+            cpu.read_register(RegisterLabel::VF).unwrap(),
             0,
             "VF should be 0 when wrapping without collision"
         );

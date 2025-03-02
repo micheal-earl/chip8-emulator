@@ -1,15 +1,12 @@
 pub mod cpu;
 pub mod rom;
 
-use cpu::{Cpu, DURATION_700HZ_IN_MICROS, HEIGHT, WIDTH};
+use cpu::{Cpu, CpuError, DURATION_700HZ_IN_MICROS, HEIGHT, WIDTH};
 use minifb::{Key, Scale, ScaleMode, Window, WindowOptions};
 use std::env;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
-
-//const WIDTH: usize = Cpu::;
-//const HEIGHT: usize = 32;
 
 fn display_buffer_to_rgb(buffer: &[u8]) -> Vec<u32> {
     let mut pixels = Vec::with_capacity(WIDTH * HEIGHT);
@@ -110,7 +107,7 @@ fn main() -> Result<(), &'static str> {
             // Halt the CPU
             (0x021A, 0x1FFF), // JP 0x1FFF
         ];
-        cpu_lock.write_instructions_batch(&instructions)?;
+        cpu_lock.write_opcode_batch(&instructions)?;
 
         // Write sprite data for each shape:
 
@@ -141,7 +138,7 @@ fn main() -> Result<(), &'static str> {
 
     // Spawn a separate thread to run the CPU.
     let cpu_clone = Arc::clone(&cpu);
-    thread::spawn(move || {
+    thread::spawn(move || -> Result<(), CpuError> {
         use std::thread::sleep;
         use std::time::Instant;
 
@@ -154,7 +151,7 @@ fn main() -> Result<(), &'static str> {
                 // Lock the CPU for just one instruction
                 let mut cpu = cpu_clone.lock().unwrap();
                 // If step() returns false, exit the loop
-                if !cpu.step() {
+                if !cpu.step()? {
                     break;
                 }
             }
@@ -165,6 +162,8 @@ fn main() -> Result<(), &'static str> {
             }
             next_time += cycle_duration;
         }
+
+        Ok(())
     });
 
     // Set up the minifb window.
@@ -188,6 +187,7 @@ fn main() -> Result<(), &'static str> {
         // Fetch the display buffer from the CPU.
         let display_buffer = {
             let cpu_lock = cpu.lock().unwrap();
+            // TODO maybe slow to clone? idk
             cpu_lock.read_display().clone()
         };
         let window_buffer = display_buffer_to_rgb(&display_buffer);
@@ -197,11 +197,6 @@ fn main() -> Result<(), &'static str> {
             .update_with_buffer(&window_buffer, WIDTH, HEIGHT)
             .unwrap();
     }
-
-    println!(
-        "5 + (10 * 2) + (10 * 2) = {}",
-        cpu.lock().unwrap().read_register(0).unwrap()
-    );
 
     Ok(())
 }
