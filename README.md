@@ -1,5 +1,6 @@
-# mikes-chip8-emulator
-Simple CHIP-8 CPU emulator
+# chip8-emulator
+
+Simple CHIP-8 CPU emulator. Can currently run the IBM Logo test rom.
 
 ## Install and run
 
@@ -8,10 +9,10 @@ cargo install
 ```
 
 ```shell
-cargo run
+cargo run "IBM Logo.ch8"
 ```
 
-or
+tests
 
 ```shell
 cargo test
