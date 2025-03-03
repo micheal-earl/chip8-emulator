@@ -26,6 +26,7 @@ type Display = [Register; 256];
 pub type CpuError = &'static str;
 
 /// The CHIP-8 describes the 16 u8 registers using Vx where x is the register index.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u16)]
 pub enum RegisterLabel {
     V0 = 0x0,
@@ -106,6 +107,8 @@ pub struct Cpu {
     memory: [Register; 4096],
     stack: [Register16; 16],
     display: Display, //[[u8; 64]; 32],
+    delay: Register,  // TODO delay timer
+    sound: Register,  // TODO sound timer
     index: Register16,
     stack_pointer: usize,
     program_counter: usize,
@@ -118,6 +121,8 @@ impl Default for Cpu {
             memory: [0; 4096],
             stack: [0; 16],
             display: [0; 256],
+            delay: 0,
+            sound: 0,
             index: 0,
             stack_pointer: 0,
             program_counter: 0x0200,
@@ -186,20 +191,56 @@ impl Cpu {
             (0x0, 0x0, 0xE, 0xE) => self.ret(),    // 00EE Return from subroutine
             (0x1, _, _, _) => self.jmp(nnn),       // 1nnn Jump to location nnn
             (0x2, _, _, _) => self.call(nnn),      // Call subroutine at location nnn
-            (0x3, _, _, _) => self.se(x, kk),      // 3xkk Skip next instruction if Vx == kk
-            (0x4, _, _, _) => self.sne(x, kk),     // 4xkk Skip next instruvtion if Vx != kk
-            (0x5, _, _, 0x0) => self.se(x, y),     // 5xy0 Skip next instruction if Vx == Vy
-            (0x6, _, _, _) => self.ld(x, kk),      // 6xkk Write kk to Vx
-            (0x7, _, _, _) => self.add(x, kk),     // 7xkk Add kk to Vx, write result to Vx
+            (0x3, _, _, _) => self.se(RegisterLabel::try_from(x)?, kk), // 3xkk Skip next instruction if Vx == kk
+            (0x4, _, _, _) => self.sne(RegisterLabel::try_from(x)?, kk), // 4xkk Skip next instruvtion if Vx != kk
+            (0x5, _, _, 0x0) => {
+                self.se_xy(RegisterLabel::try_from(x)?, RegisterLabel::try_from(y)?)
+                // 5xy0 Skip next instruction if Vx == Vy
+            }
+            (0x6, _, _, _) => self.ld(RegisterLabel::try_from(x)?, kk), // 6xkk Write kk to Vx
+            (0x7, _, _, _) => self.add(RegisterLabel::try_from(x)?, kk), // 7xkk Add kk to Vx, write result to Vx
             (0x8, _, _, _) => match d {
-                4 => self.add_xy(x, y),
-                _ => todo!("d not 4"),
+                0x0 => todo!("8xy0 LD Vx, Vy"),
+                0x1 => todo!("8xy1 OR Vx, Vy"),
+                0x2 => todo!("8xy2 AND Vx, Vy"),
+                0x3 => todo!("8xy3 XOR Vx, Vy"),
+                0x4 => self.add_xy(RegisterLabel::try_from(x)?, RegisterLabel::try_from(y)?),
+                0x5 => todo!("8xy5 SUB Vx, Vy"),
+                0x6 => todo!("8xy6 SHR Vx, Vy"),
+                0x7 => todo!("8xy7 SUBN Vx, Vy"),
+                0xE => todo!("8xyE SHL Vx , Vy"),
+                _ => return Err("0x8 instruction with unknown d value"),
             },
+            (0x9, _, _, 0x0) => {
+                self.sne_xy(RegisterLabel::try_from(x)?, RegisterLabel::try_from(y)?)
+                // 9xy0 Skip next instruction if Vx != Vy
+            }
             (0xA, _, _, _) => self.ldi(nnn),
+            (0xB, _, _, _) => todo!("Bnnn JP V0, addr"),
+            (0xC, _, _, _) => todo!("Cxkk RND Vx, byte"),
             (0xD, _, _, _) => {
                 self.drw(RegisterLabel::try_from(x)?, RegisterLabel::try_from(y)?, d)?
+                // Dxyn Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
             }
-            _ => todo!("catch all"),
+            // TODO Use nested match statements like the 0x8 insturctions?
+            (0xE, _, 0x9, 0xE) => todo!("Ex9E SKP - Skip next instruction if key Vx is pressed"),
+            (0xE, _, 0xA, 0x1) => {
+                todo!("ExA1 SKNP - Skip next instruction if key Vx is not pressed")
+            }
+            (0xF, _, 0x0, 0x7) => {
+                todo!("Fx07 LD Vx, delay - value of delay timer is placed into Vx")
+            }
+            (0xF, _, 0x0, 0xA) => {
+                todo!("Fx0A LD Vx, delay - value of delay timer is placed into Vx")
+            }
+            (0xF, _, 0x1, 0x5) => todo!("Fx15 LD delay, Vx - delay is set to Vx"),
+            (0xF, _, 0x1, 0x8) => todo!("Fx18 LD sound, Vx - sound is set to Vx"),
+            (0xF, _, 0x1, 0xE) => todo!("Fx1E LD delay, Vx - delay is set to Vx"),
+            (0xF, _, 0x2, 0x9) => todo!("Fx29 LD F, Vx"),
+            (0xF, _, 0x3, 0x3) => todo!("Fx33"),
+            (0xF, _, 0x5, 0x5) => todo!("Fx55"),
+            (0xF, _, 0x6, 0x5) => todo!("Fx65"),
+            _ => return Err("Unknown instruction"),
         }
 
         Ok(())
@@ -248,37 +289,56 @@ impl Cpu {
     }
 
     /// (1nnn) JUMP to `addr`
-    fn jmp(&mut self, addr: u16) {
+    fn jmp(&mut self, addr: Address) {
         self.program_counter = addr as usize;
     }
 
-    /// (2xkk) SE  _S_kip if _e_qual
-    fn se(&mut self, _vx: u8, _kk: u8) {
-        todo!("se");
+    /// (3xkk) SE Skip next instruction if Vx == kk
+    fn se(&mut self, vx: RegisterLabel, kk: u8) {
+        if self.registers[vx as usize] == kk {
+            self.program_counter += 2;
+        }
     }
 
-    /// (2xkk) SNE  _S_kip if _n_ot _e_qual
-    fn sne(&mut self, _vx: u8, _kk: u8) {
-        todo!("sne");
+    /// (4xkk) SNE Skip if Vx != kk
+    fn sne(&mut self, vx: RegisterLabel, kk: u8) {
+        if self.registers[vx as usize] != kk {
+            self.program_counter += 2;
+        }
+    }
+
+    /// (5xy0) SE Skip next instruction if Vx == Vy
+    fn sne_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
+        if self.registers[vx as usize] != self.registers[vy as usize] {
+            self.program_counter += 2;
+        }
+    }
+
+    /// (6xy0) SE Skip next instruction if Vx == Vy
+    fn se_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
+        if self.registers[vx as usize] == self.registers[vy as usize] {
+            self.program_counter += 2;
+        }
     }
 
     /// (6xkk) LD sets the value `kk` into register `Vx`
-    fn ld(&mut self, vx: u8, kk: u8) {
+    fn ld(&mut self, vx: RegisterLabel, kk: u8) {
         self.registers[vx as usize] = kk;
     }
 
-    /// (6xkk) LDI sets the value `nnn` into the index register (I register)
+    /// (Annn) LDI sets the value `nnn` into the index register (I register)
     fn ldi(&mut self, nnn: u16) {
         self.index = nnn;
     }
 
     /// (7xkk) ADD adds the value `kk` to register `Vx` and stores the sum in 'Vx'
-    fn add(&mut self, x: u8, kk: u8) {
-        self.registers[x as usize] += kk;
+    fn add(&mut self, vx: RegisterLabel, kk: u8) {
+        // Use overflowing_add to ensure program does not panic
+        (self.registers[vx as usize], _) = self.registers[vx as usize].overflowing_add(kk);
     }
 
     /// (2nnn) CALL sub-routine at `addr`
-    fn call(&mut self, addr: u16) {
+    fn call(&mut self, addr: Address) {
         if self.stack_pointer >= self.stack.len() {
             panic!("Stack Overflow!")
         }
@@ -300,12 +360,12 @@ impl Cpu {
     }
 
     // (7xkk) Add one registers contents to another registers contents
-    fn add_xy(&mut self, x: u8, y: u8) {
-        let arg1 = self.registers[x as usize];
-        let arg2 = self.registers[y as usize];
+    fn add_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
+        let arg1 = self.registers[vx as usize];
+        let arg2 = self.registers[vy as usize];
 
         let (val, overflow) = arg1.overflowing_add(arg2);
-        self.registers[x as usize] = val;
+        self.registers[vx as usize] = val;
 
         if overflow {
             self.registers[0xF] = 1;
