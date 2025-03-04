@@ -26,7 +26,7 @@ type Display = [Register; 256];
 pub type CpuError = &'static str;
 
 /// The CHIP-8 describes the 16 u8 registers using Vx where x is the register index.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u16)]
 pub enum RegisterLabel {
     V0 = 0x0,
@@ -185,34 +185,36 @@ impl Cpu {
 
     fn execute(&mut self, decoded: Instruction) -> Result<(), CpuError> {
         let (c, x, y, d, kk, nnn) = decoded;
+        let vx = RegisterLabel::try_from(x)?;
+        let vy = RegisterLabel::try_from(y)?;
         match (c, x, y, d) {
             (0x0, 0x0, 0x0, 0x0) => return Ok(()), // 0000
             (0x0, 0x0, 0xE, 0x0) => self.cls(),    // 00E0 Clear the screen
             (0x0, 0x0, 0xE, 0xE) => self.ret(),    // 00EE Return from subroutine
             (0x1, _, _, _) => self.jmp(nnn),       // 1nnn Jump to location nnn
             (0x2, _, _, _) => self.call(nnn),      // Call subroutine at location nnn
-            (0x3, _, _, _) => self.se(RegisterLabel::try_from(x)?, kk), // 3xkk Skip next instruction if Vx == kk
-            (0x4, _, _, _) => self.sne(RegisterLabel::try_from(x)?, kk), // 4xkk Skip next instruvtion if Vx != kk
+            (0x3, _, _, _) => self.se(vx, kk),     // 3xkk Skip next instruction if Vx == kk
+            (0x4, _, _, _) => self.sne(vx, kk),    // 4xkk Skip next instruvtion if Vx != kk
             (0x5, _, _, 0x0) => {
-                self.se_xy(RegisterLabel::try_from(x)?, RegisterLabel::try_from(y)?)
+                self.se_xy(vx, vy)
                 // 5xy0 Skip next instruction if Vx == Vy
             }
-            (0x6, _, _, _) => self.ld(RegisterLabel::try_from(x)?, kk), // 6xkk Write kk to Vx
-            (0x7, _, _, _) => self.add(RegisterLabel::try_from(x)?, kk), // 7xkk Add kk to Vx, write result to Vx
+            (0x6, _, _, _) => self.ld(vx, kk), // 6xkk Write kk to Vx
+            (0x7, _, _, _) => self.add(vx, kk), // 7xkk Add kk to Vx, write result to Vx
             (0x8, _, _, _) => match d {
-                0x0 => todo!("8xy0 LD Vx, Vy"),
-                0x1 => todo!("8xy1 OR Vx, Vy"),
-                0x2 => todo!("8xy2 AND Vx, Vy"),
-                0x3 => todo!("8xy3 XOR Vx, Vy"),
-                0x4 => self.add_xy(RegisterLabel::try_from(x)?, RegisterLabel::try_from(y)?),
-                0x5 => todo!("8xy5 SUB Vx, Vy"),
-                0x6 => todo!("8xy6 SHR Vx, Vy"),
-                0x7 => todo!("8xy7 SUBN Vx, Vy"),
-                0xE => todo!("8xyE SHL Vx , Vy"),
+                0x0 => self.ld_vx_into_vy(vx, vy),
+                0x1 => self.or_xy(vx, vy),
+                0x2 => self.and_xy(vx, vy),
+                0x3 => self.xor_xy(vx, vy),
+                0x4 => self.add_xy(vx, vy),
+                0x5 => self.sub_xy(vx, vy),
+                0x6 => self.shr(vx),
+                0x7 => self.subn_xy(vx, vy),
+                0xE => self.shl(vx),
                 _ => return Err("0x8 instruction with unknown d value"),
             },
             (0x9, _, _, 0x0) => {
-                self.sne_xy(RegisterLabel::try_from(x)?, RegisterLabel::try_from(y)?)
+                self.sne_xy(vx, vy)
                 // 9xy0 Skip next instruction if Vx != Vy
             }
             (0xA, _, _, _) => self.ldi(nnn),
@@ -283,61 +285,140 @@ impl Cpu {
         Ok(true)
     }
 
-    /// (00E0) CLEAR the display
+    /// 00E0 CLEAR - Clears the display
     fn cls(&mut self) {
         self.display = [0; 256];
     }
 
-    /// (1nnn) JUMP to `addr`
+    /// 1nnn JUMP - Set program counter to address
     fn jmp(&mut self, addr: Address) {
         self.program_counter = addr as usize;
     }
 
-    /// (3xkk) SE Skip next instruction if Vx == kk
+    /// 3xkk SE - Skip next instruction if Vx == kk
     fn se(&mut self, vx: RegisterLabel, kk: u8) {
         if self.registers[vx as usize] == kk {
             self.program_counter += 2;
         }
     }
 
-    /// (4xkk) SNE Skip if Vx != kk
+    /// 4xkk SNE - Skip if Vx != kk
     fn sne(&mut self, vx: RegisterLabel, kk: u8) {
         if self.registers[vx as usize] != kk {
             self.program_counter += 2;
         }
     }
 
-    /// (5xy0) SE Skip next instruction if Vx == Vy
+    /// 5xy0 SE - Skip next instruction if Vx == Vy
     fn sne_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
         if self.registers[vx as usize] != self.registers[vy as usize] {
             self.program_counter += 2;
         }
     }
 
-    /// (6xy0) SE Skip next instruction if Vx == Vy
+    /// 6xy0 SE - Skip next instruction if Vx == Vy
     fn se_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
         if self.registers[vx as usize] == self.registers[vy as usize] {
             self.program_counter += 2;
         }
     }
 
-    /// (6xkk) LD sets the value `kk` into register `Vx`
+    /// 6xkk LD - Sets the value `kk` into register `Vx`
     fn ld(&mut self, vx: RegisterLabel, kk: u8) {
         self.registers[vx as usize] = kk;
     }
 
-    /// (Annn) LDI sets the value `nnn` into the index register (I register)
+    /// 8xy0 LD - Stores value of Vy in Vx
+    fn ld_vx_into_vy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
+        self.registers[vx as usize] = self.registers[vy as usize];
+    }
+
+    /// 8xy1 OR - Bitwise OR on Vy value and Vx value, store result in Vx
+    fn or_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
+        self.registers[vx as usize] |= self.registers[vy as usize];
+    }
+
+    /// 8xy2 AND - Bitwise OR on Vy value and Vx value, store result in Vx
+    fn and_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
+        self.registers[vx as usize] &= self.registers[vy as usize];
+    }
+
+    /// 8xy3 XOR - Bitwise XOR on Vy value and Vx value, store result in Vx
+    fn xor_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
+        self.registers[vx as usize] ^= self.registers[vy as usize];
+    }
+
+    /// 8xy4 ADD - Add Vy to Vx and store sum in Vx
+    fn add_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
+        let vx_value = self.registers[vx as usize];
+        let vy_value = self.registers[vy as usize];
+
+        let (result, overflow) = vx_value.overflowing_add(vy_value);
+        self.registers[vx as usize] = result;
+
+        if overflow {
+            self.registers[0xF] = 1;
+        } else {
+            self.registers[0xF] = 0;
+        }
+    }
+
+    /// 8xy5 SUB - Subtract Vy from Vx and store result in Vx
+    fn sub_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
+        let vx_value = self.registers[vx as usize];
+        let vy_value = self.registers[vy as usize];
+
+        if vx_value > vy_value {
+            self.registers[0xF] = 1;
+        } else {
+            self.registers[0xF] = 0;
+        }
+
+        let (result, _) = vx_value.overflowing_sub(vy_value);
+        self.registers[vx as usize] = result;
+    }
+
+    /// 8xy6 SHR - If the least-significant bit of Vx is 1, then VF is set to 1, otherwise 0. Then Vx is divided by 2
+    fn shr(&mut self, vx: RegisterLabel) {
+        let vx_value = self.registers[vx as usize];
+        self.registers[0xF] = vx_value & 1;
+        self.registers[vx as usize] = vx_value >> 1;
+    }
+
+    /// 8xy7 SUBN - If Vy > Vx, then VF is set to 1, otherwise 0. Then Vx is subtracted from Vy, and the results stored in Vx
+    fn subn_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
+        let vx_value = self.registers[vx as usize];
+        let vy_value = self.registers[vy as usize];
+
+        if vy_value > vx_value {
+            self.registers[0xF] = 1;
+        } else {
+            self.registers[0xF] = 0;
+        }
+
+        let (result, _) = vy_value.overflowing_sub(vx_value);
+        self.registers[vx as usize] = result;
+    }
+
+    /// 8xyE SHL - If the most-significant bit of Vx is 1, then VF is set to 1, otherwise to 0. Then Vx is multiplied by 2
+    fn shl(&mut self, vx: RegisterLabel) {
+        let vx_value = self.registers[vx as usize];
+        self.registers[0xF] = (vx_value >> 7) & 1;
+        self.registers[vx as usize] = vx_value << 1;
+    }
+
+    /// Annn LDI - Sets the value `nnn` into the index register (I register)
     fn ldi(&mut self, nnn: u16) {
         self.index = nnn;
     }
 
-    /// (7xkk) ADD adds the value `kk` to register `Vx` and stores the sum in 'Vx'
+    /// 7xkk ADD - Adds the value `kk` to register `Vx` and stores the sum in 'Vx'
     fn add(&mut self, vx: RegisterLabel, kk: u8) {
         // Use overflowing_add to ensure program does not panic
         (self.registers[vx as usize], _) = self.registers[vx as usize].overflowing_add(kk);
     }
 
-    /// (2nnn) CALL sub-routine at `addr`
+    /// 2nnn CALL - Sub-routine at `addr`
     fn call(&mut self, addr: Address) {
         if self.stack_pointer >= self.stack.len() {
             panic!("Stack Overflow!")
@@ -348,7 +429,7 @@ impl Cpu {
         self.program_counter = addr as usize;
     }
 
-    /// (00ee) RET return from the current sub-routine
+    /// 00ee RET - Return from the current sub-routine
     fn ret(&mut self) {
         if self.stack_pointer == 0 {
             panic!("Stack Underflow!");
@@ -357,21 +438,6 @@ impl Cpu {
         self.stack_pointer -= 1;
         let call_addr = self.stack[self.stack_pointer];
         self.program_counter = call_addr as usize;
-    }
-
-    // (7xkk) Add one registers contents to another registers contents
-    fn add_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
-        let arg1 = self.registers[vx as usize];
-        let arg2 = self.registers[vy as usize];
-
-        let (val, overflow) = arg1.overflowing_add(arg2);
-        self.registers[vx as usize] = val;
-
-        if overflow {
-            self.registers[0xF] = 1;
-        } else {
-            self.registers[0xF] = 0;
-        }
     }
 
     /// Display d-byte sprite starting at memory location I at (Vx, Vy)  
@@ -707,6 +773,284 @@ mod tests {
         cpu.run()?;
 
         assert_eq!(cpu.index, 0x123);
+
+        Ok(())
+    }
+
+    #[test]
+    fn se_operation() -> Result<(), CpuError> {
+        // Test 3xkk: Skip next instruction if Vx equals kk
+        let mut cpu = Cpu::default();
+        cpu.write_register(RegisterLabel::V0, 10)?;
+        // If V0 == 10, the next instruction should be skipped
+        let opcodes = [
+            (0x0200, 0x300A), // 3xkk: if V0 == 0x0A, skip next instruction
+            (0x0202, 0x6005), // 6xkk: would load 5 into V0 if executed
+            (0x0204, 0x1FFF), // Jump to halt
+        ];
+        cpu.write_opcode_batch(&opcodes)?;
+        cpu.run()?;
+        // V0 should remain 10 because the load of 5 was skipped
+        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 10);
+        Ok(())
+    }
+
+    #[test]
+    fn sne_operation() -> Result<(), CpuError> {
+        // Test 4xkk: Skip next instruction if Vx does NOT equal kk
+        let mut cpu = Cpu::default();
+        cpu.write_register(RegisterLabel::V0, 10)?;
+        // Since 10 != 5, the next instruction should be skipped
+        let opcodes = [
+            (0x0200, 0x4005), // 4xkk: if V0 != 0x05, skip next instruction
+            (0x0202, 0x6003), // 6xkk: would load 3 into V0 if executed
+            (0x0204, 0x1FFF), // Jump to halt
+        ];
+        cpu.write_opcode_batch(&opcodes)?;
+        cpu.run()?;
+        // V0 should remain 10 because the load was skipped
+        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 10);
+        Ok(())
+    }
+
+    #[test]
+    fn se_xy_operation() -> Result<(), CpuError> {
+        // Test 5xy0: Skip next instruction if Vx equals Vy
+        let mut cpu = Cpu::default();
+        cpu.write_register(RegisterLabel::V0, 20)?;
+        cpu.write_register(RegisterLabel::V1, 20)?;
+        // Since V0 == V1, the next instruction should be skipped
+        let opcodes = [
+            (0x0200, 0x5010), // 5xy0: if V0 == V1, skip next instruction
+            (0x0202, 0x6005), // 6xkk: would load 5 into V0
+            (0x0204, 0x1FFF), // Jump to halt
+        ];
+        cpu.write_opcode_batch(&opcodes)?;
+        cpu.run()?;
+        // V0 should still be 20
+        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 20);
+        Ok(())
+    }
+
+    #[test]
+    fn sne_xy_operation() -> Result<(), CpuError> {
+        // Test 9xy0: Skip next instruction if Vx does NOT equal Vy
+        let mut cpu = Cpu::default();
+        cpu.write_register(RegisterLabel::V0, 15)?;
+        cpu.write_register(RegisterLabel::V1, 20)?;
+        // Since V0 != V1, the next instruction should be skipped
+        let opcodes = [
+            (0x0200, 0x9010), // 9xy0: if V0 != V1, skip next instruction
+            (0x0202, 0x6099), // 6xkk: would load 0x99 into V0
+            (0x0204, 0x1FFF), // Jump to halt
+        ];
+        cpu.write_opcode_batch(&opcodes)?;
+        cpu.run()?;
+        // V0 should remain 15
+        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 15);
+        Ok(())
+    }
+
+    #[test]
+    fn ld_vx_into_vy_operation() -> Result<(), CpuError> {
+        // Test 8xy0: Set Vx = Vy
+        let mut cpu = Cpu::default();
+        cpu.write_register(RegisterLabel::V1, 42)?;
+        let opcodes = [
+            (0x0200, 0x8010), // 8xy0: copy value from V1 to V0
+            (0x0202, 0x1FFF), // Jump to halt
+        ];
+        cpu.write_opcode_batch(&opcodes)?;
+        cpu.run()?;
+        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 42);
+        Ok(())
+    }
+
+    #[test]
+    fn or_xy_operation() -> Result<(), CpuError> {
+        // Test 8xy1: Set Vx = Vx OR Vy
+        let mut cpu = Cpu::default();
+        cpu.write_register(RegisterLabel::V0, 0xA)?; // 0b1010
+        cpu.write_register(RegisterLabel::V1, 0x5)?; // 0b0101
+        let opcodes = [
+            (0x0200, 0x8011), // 8xy1: V0 = V0 OR V1
+            (0x0202, 0x1FFF), // Jump to halt
+        ];
+        cpu.write_opcode_batch(&opcodes)?;
+        cpu.run()?;
+        // 0b1010 OR 0b0101 = 0b1111 (0xF)
+        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 0xF);
+        Ok(())
+    }
+
+    #[test]
+    fn and_xy_operation() -> Result<(), CpuError> {
+        // Test 8xy2: Set Vx = Vx AND Vy
+        let mut cpu = Cpu::default();
+        cpu.write_register(RegisterLabel::V0, 0xA)?; // 0b1010
+        cpu.write_register(RegisterLabel::V1, 0x6)?; // 0b0110
+        let opcodes = [
+            (0x0200, 0x8012), // 8xy2: V0 = V0 AND V1
+            (0x0202, 0x1FFF), // Jump to halt
+        ];
+        cpu.write_opcode_batch(&opcodes)?;
+        cpu.run()?;
+        // 0b1010 AND 0b0110 = 0b0010 (0x2)
+        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 0x2);
+        Ok(())
+    }
+
+    #[test]
+    fn xor_xy_operation() -> Result<(), CpuError> {
+        // Test 8xy3: Set Vx = Vx XOR Vy
+        let mut cpu = Cpu::default();
+        cpu.write_register(RegisterLabel::V0, 0xA)?; // 0b1010
+        cpu.write_register(RegisterLabel::V1, 0x6)?; // 0b0110
+        let opcodes = [
+            (0x0200, 0x8013), // 8xy3: V0 = V0 XOR V1
+            (0x0202, 0x1FFF), // Jump to halt
+        ];
+        cpu.write_opcode_batch(&opcodes)?;
+        cpu.run()?;
+        // 0b1010 XOR 0b0110 = 0b1100 (0xC)
+        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 0xC);
+        Ok(())
+    }
+
+    #[test]
+    fn sub_xy_operation() -> Result<(), CpuError> {
+        // Test case where Vx > Vy
+        {
+            let mut cpu = Cpu::default();
+            cpu.write_register(RegisterLabel::V0, 10)?;
+            cpu.write_register(RegisterLabel::V1, 5)?;
+            let opcodes = [
+                (0x0200, 0x8015), // 8xy5: V0 = V0 - V1 using new sub operation
+                (0x0202, 0x1FFF), // Jump to halt
+            ];
+            cpu.write_opcode_batch(&opcodes)?;
+            cpu.run()?;
+            // V0 should be 5 and VF should be set to 1
+            assert_eq!(cpu.read_register(RegisterLabel::V0)?, 5);
+            assert_eq!(cpu.read_register(RegisterLabel::VF)?, 1);
+        }
+
+        // Test case where Vx <= Vy
+        {
+            let mut cpu = Cpu::default();
+            cpu.write_register(RegisterLabel::V0, 5)?;
+            cpu.write_register(RegisterLabel::V1, 10)?;
+            let opcodes = [
+                (0x0200, 0x8015), // 8xy5: V0 = V0 - V1 using new sub operation
+                (0x0202, 0x1FFF), // Jump to halt
+            ];
+            cpu.write_opcode_batch(&opcodes)?;
+            cpu.run()?;
+            // V0 should be 251 (5 - 10 with wrapping) and VF should be set to 0
+            assert_eq!(cpu.read_register(RegisterLabel::V0)?, 251);
+            assert_eq!(cpu.read_register(RegisterLabel::VF)?, 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cls_operation() -> Result<(), CpuError> {
+        // Test 00E0: Clear the display
+        let mut cpu = Cpu::default();
+        // Fill the display with nonzero data
+        for byte in cpu.display.iter_mut() {
+            *byte = 0xFF;
+        }
+        let opcodes = [
+            (0x0200, 0x00E0), // CLS instruction
+            (0x0202, 0x1FFF), // Jump to halt
+        ];
+        cpu.write_opcode_batch(&opcodes)?;
+        cpu.run()?;
+        // Verify that the entire display is cleared (all zeros)
+        for &byte in cpu.read_display().iter() {
+            assert_eq!(byte, 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shr_operation() -> Result<(), CpuError> {
+        // Test 8xy6 SHR: if the least-significant bit of Vx is 1 then VF is set to 1 and Vx is divided by 2
+        let mut cpu = Cpu::default();
+        // Case where LSB is 1: for example V0 = 5 (binary 0101)
+        cpu.write_register(RegisterLabel::V0, 5)?;
+        cpu.shr(RegisterLabel::V0);
+        // Expect V0 becomes 5 >> 1 = 2 and VF becomes 1
+        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 2);
+        assert_eq!(cpu.read_register(RegisterLabel::VF)?, 1);
+
+        // Case where LSB is 0: for example V1 = 4 (binary 0100)
+        cpu.write_register(RegisterLabel::V1, 4)?;
+        cpu.shr(RegisterLabel::V1);
+        // Expect V1 becomes 4 >> 1 = 2 and VF becomes 0
+        assert_eq!(cpu.read_register(RegisterLabel::V1)?, 2);
+        assert_eq!(cpu.read_register(RegisterLabel::VF)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn subn_xy_operation_no_borrow() -> Result<(), CpuError> {
+        // Test 8xy7 SUBN: if Vy > Vx then VF is set to 1 and Vx becomes Vy - Vx
+        let mut cpu = Cpu::default();
+        // Set V0 to 5 and V1 to 10
+        cpu.write_register(RegisterLabel::V0, 5)?;
+        cpu.write_register(RegisterLabel::V1, 10)?;
+        // Expected: VF should be set to 1 and V0 becomes 10 - 5 = 5
+        let opcodes = [
+            (0x0200, 0x8017), // 8xy7: for x = 0 and y = 1, perform V0 = V1 - V0
+            (0x0202, 0x1FFF), // Jump to halt
+        ];
+        cpu.write_opcode_batch(&opcodes)?;
+        cpu.run()?;
+        assert_eq!(cpu.read_register(RegisterLabel::VF)?, 1);
+        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn subn_xy_operation_with_borrow() -> Result<(), CpuError> {
+        // Test 8xy7 SUBN: if Vy <= Vx then VF is set to 0 and Vx becomes Vy - Vx (with wrapping)
+        let mut cpu = Cpu::default();
+        // Set V0 to 10 and V1 to 5
+        cpu.write_register(RegisterLabel::V0, 10)?;
+        cpu.write_register(RegisterLabel::V1, 5)?;
+        // Expected: VF should be set to 0 and V0 becomes 5 - 10, which in wrapping arithmetic yields 251
+        let opcodes = [
+            (0x0200, 0x8017), // 8xy7: for x = 0 and y = 1, perform V0 = V1 - V0
+            (0x0202, 0x1FFF), // Jump to halt
+        ];
+        cpu.write_opcode_batch(&opcodes)?;
+        cpu.run()?;
+        assert_eq!(cpu.read_register(RegisterLabel::VF)?, 0);
+        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 251);
+        Ok(())
+    }
+
+    #[test]
+    fn shl_operation() -> Result<(), CpuError> {
+        let mut cpu = Cpu::default();
+
+        // Case 1: V0 has its MSB set
+        // For example, 0x90 is 1001 0000 in binary
+        // The MSB is 1 so VF should be set to 1 and V0 becomes 0x90 << 1 = 0x20
+        cpu.write_register(RegisterLabel::V0, 0x90)?;
+        cpu.shl(RegisterLabel::V0);
+        assert_eq!(cpu.read_register(RegisterLabel::VF)?, 1);
+        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 0x20);
+
+        // Case 2: V1 has its MSB not set
+        // For example, 0x30 is 0011 0000 in binary
+        // The MSB is 0 so VF should be set to 0 and V1 becomes 0x30 << 1 = 0x60
+        cpu.write_register(RegisterLabel::V1, 0x30)?;
+        cpu.shl(RegisterLabel::V1);
+        assert_eq!(cpu.read_register(RegisterLabel::VF)?, 0);
+        assert_eq!(cpu.read_register(RegisterLabel::V1)?, 0x60);
 
         Ok(())
     }
