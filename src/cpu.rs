@@ -145,10 +145,10 @@ impl Cpu {
         let out = op_high_byte << 8 | op_low_byte;
         if out != 0 {
             println!("{}, {:#04x}", self.program_counter, &out);
-            println!(
-                "{}, {}, {}",
-                self.display[0], self.display[5], self.display[10]
-            )
+            // println!(
+            //     "{}, {}, {}",
+            //     self.display[0], self.display[5], self.display[10]
+            // )
         }
         // DEBUG ^
 
@@ -239,9 +239,9 @@ impl Cpu {
             (0xF, _, 0x1, 0x8) => todo!("Fx18 LD sound, Vx - sound is set to Vx"),
             (0xF, _, 0x1, 0xE) => todo!("Fx1E LD delay, Vx - delay is set to Vx"),
             (0xF, _, 0x2, 0x9) => todo!("Fx29 LD F, Vx"),
-            (0xF, _, 0x3, 0x3) => todo!("Fx33"),
-            (0xF, _, 0x5, 0x5) => todo!("Fx55"),
-            (0xF, _, 0x6, 0x5) => todo!("Fx65"),
+            (0xF, _, 0x3, 0x3) => self.ld_bcd(vx),
+            (0xF, _, 0x5, 0x5) => self.ld_from_registers(vx),
+            (0xF, _, 0x6, 0x5) => self.ld_to_registers(vx),
             _ => return Err("Unknown instruction"),
         }
 
@@ -290,8 +290,30 @@ impl Cpu {
         self.display = [0; 256];
     }
 
+    /// 00EE RET - Return from the current sub-routine
+    fn ret(&mut self) {
+        if self.stack_pointer == 0 {
+            panic!("Stack Underflow!");
+        }
+
+        self.stack_pointer -= 1;
+        let call_addr = self.stack[self.stack_pointer];
+        self.program_counter = call_addr as usize;
+    }
+
     /// 1nnn JUMP - Set program counter to address
     fn jmp(&mut self, addr: Address) {
+        self.program_counter = addr as usize;
+    }
+
+    /// 2nnn CALL - Sub-routine at `addr`
+    fn call(&mut self, addr: Address) {
+        if self.stack_pointer >= self.stack.len() {
+            panic!("Stack Overflow!")
+        }
+
+        self.stack[self.stack_pointer] = self.program_counter as u16;
+        self.stack_pointer += 1;
         self.program_counter = addr as usize;
     }
 
@@ -309,13 +331,6 @@ impl Cpu {
         }
     }
 
-    /// 5xy0 SE - Skip next instruction if Vx == Vy
-    fn sne_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
-        if self.registers[vx as usize] != self.registers[vy as usize] {
-            self.program_counter += 2;
-        }
-    }
-
     /// 6xy0 SE - Skip next instruction if Vx == Vy
     fn se_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
         if self.registers[vx as usize] == self.registers[vy as usize] {
@@ -326,6 +341,12 @@ impl Cpu {
     /// 6xkk LD - Sets the value `kk` into register `Vx`
     fn ld(&mut self, vx: RegisterLabel, kk: u8) {
         self.registers[vx as usize] = kk;
+    }
+
+    /// 7xkk ADD - Adds the value `kk` to register `Vx` and stores the sum in 'Vx'
+    fn add(&mut self, vx: RegisterLabel, kk: u8) {
+        // Use overflowing_add to ensure program does not panic
+        (self.registers[vx as usize], _) = self.registers[vx as usize].overflowing_add(kk);
     }
 
     /// 8xy0 LD - Stores value of Vy in Vx
@@ -407,40 +428,30 @@ impl Cpu {
         self.registers[vx as usize] = vx_value << 1;
     }
 
+    /// 9xy0 SE - Skip next instruction if Vx == Vy
+    fn sne_xy(&mut self, vx: RegisterLabel, vy: RegisterLabel) {
+        if self.registers[vx as usize] != self.registers[vy as usize] {
+            self.program_counter += 2;
+        }
+    }
+
     /// Annn LDI - Sets the value `nnn` into the index register (I register)
     fn ldi(&mut self, nnn: u16) {
         self.index = nnn;
     }
 
-    /// 7xkk ADD - Adds the value `kk` to register `Vx` and stores the sum in 'Vx'
-    fn add(&mut self, vx: RegisterLabel, kk: u8) {
-        // Use overflowing_add to ensure program does not panic
-        (self.registers[vx as usize], _) = self.registers[vx as usize].overflowing_add(kk);
+    /// Bnnn JP - The program counter is set to nnn plus the value of V0.
+    fn jmp_x() {
+        todo!()
     }
 
-    /// 2nnn CALL - Sub-routine at `addr`
-    fn call(&mut self, addr: Address) {
-        if self.stack_pointer >= self.stack.len() {
-            panic!("Stack Overflow!")
-        }
-
-        self.stack[self.stack_pointer] = self.program_counter as u16;
-        self.stack_pointer += 1;
-        self.program_counter = addr as usize;
+    /// Cxkk RND - The interpreter generates a random number from 0 to 255, which is then ANDed with the value kk.
+    /// The results are stored in Vx.
+    fn rnd() {
+        todo!()
     }
 
-    /// 00ee RET - Return from the current sub-routine
-    fn ret(&mut self) {
-        if self.stack_pointer == 0 {
-            panic!("Stack Underflow!");
-        }
-
-        self.stack_pointer -= 1;
-        let call_addr = self.stack[self.stack_pointer];
-        self.program_counter = call_addr as usize;
-    }
-
-    /// Display d-byte sprite starting at memory location I at (Vx, Vy)  
+    /// Dxyn DRW - Display d-byte sprite starting at memory location I at (Vx, Vy)  
     /// Sprites are XOR’d onto the display  
     /// If the sprite is partially off-screen, it is clipped (pixels outside are not drawn)  
     /// If the sprite is completely off-screen, it wraps around  
@@ -504,6 +515,100 @@ impl Cpu {
         }
 
         Ok(())
+    }
+
+    /// Ex9E SKP - Skip next instruction if key with the value of Vx is pressed
+    /// Checks the keyboard, and if the key corresponding to the value of Vx is currently in the down position, PC is increased by 2
+    fn skp() {
+        todo!()
+    }
+
+    /// ExA1 SKNP - Skip next instruction if key with the value of Vx is not pressed
+    /// Checks the keyboard, and if the key corresponding to the value of Vx is currently in the up position, PC is increased by 2
+    fn sknp() {
+        todo!()
+    }
+
+    /// Fx07 LD - Set Vx = delay timer value
+    /// The value of DT is placed into Vx
+    fn ld_from_delay() {
+        todo!()
+    }
+
+    /// Fx0A LD - Wait for a key press, store the value of the key in Vx
+    /// All execution stops until a key is pressed, then the value of that key is stored in Vx
+    fn ld_from_key() {
+        todo!()
+    }
+
+    /// Fx15 - LD DT, Vx
+    /// Set delay timer = Vx
+    /// DT is set equal to the value of Vx
+    fn ld_to_delay() {
+        todo!()
+    }
+
+    /// Fx18 - LD ST, Vx
+    /// Set sound timer = Vx
+    /// ST is set equal to the value of Vx
+    fn ld_to_sound() {
+        todo!()
+    }
+
+    /// Fx1E - ADD I, Vx
+    /// Set I = I + Vx
+    /// The values of I and Vx are added, and the results are stored in I
+    fn add_i() {
+        todo!()
+    }
+
+    /// Fx29 - LD F, Vx  
+    /// Set I = location of sprite for digit Vx  
+    /// The value of I is set to the location for the hexadecimal sprite corresponding to the value of Vx
+    fn ld_i() {
+        todo!()
+    }
+
+    /// Fx33 - LD B, Vx
+    /// Store BCD representation of Vx in memory locations I, I+1, and I+2
+    /// The interpreter takes the decimal value of Vx, and places the hundreds digit in memory at location in I,
+    /// the tens digit at location I+1, and the ones digit at location I+2
+    fn ld_bcd(&mut self, vx: RegisterLabel) {
+        let value = self.registers[vx as usize];
+
+        // Calculate the BCD digits
+        let hundreds = value / 100;
+        let tens = (value % 100) / 10;
+        let ones = value % 10;
+
+        let index = self.index as usize;
+
+        // Write the digits to memory at addresses I, I+1, and I+2
+        self.memory[index] = hundreds;
+        self.memory[index + 1] = tens;
+        self.memory[index + 2] = ones;
+    }
+
+    /// Fx55 LD - Store registers V0 through Vx in memory starting at location I
+    /// The interpreter copies the values of registers V0 through Vx into memory, starting at the address in I
+    fn ld_from_registers(&mut self, vx: RegisterLabel) {
+        let mut index = self.index;
+        let stop = vx as u8;
+        for i in 0..=stop {
+            self.memory[index as usize] = self.registers[i as usize];
+            index += 1;
+        }
+    }
+
+    /// Fx65 LD - Read registers V0 through Vx from memory starting at location I
+    /// The interpreter reads values from memory starting at location I into registers V0 through Vx
+    fn ld_to_registers(&mut self, vx: RegisterLabel) {
+        let mut index = self.index;
+        let stop = vx as u8;
+        for i in 0..=stop {
+            self.registers[i as usize] = self.memory[index as usize];
+            index += 1
+        }
     }
 
     /// Helper to get the value of an individual pixel from the bit-packed display  
@@ -975,26 +1080,6 @@ mod tests {
     }
 
     #[test]
-    fn shr_operation() -> Result<(), CpuError> {
-        // Test 8xy6 SHR: if the least-significant bit of Vx is 1 then VF is set to 1 and Vx is divided by 2
-        let mut cpu = Cpu::default();
-        // Case where LSB is 1: for example V0 = 5 (binary 0101)
-        cpu.write_register(RegisterLabel::V0, 5)?;
-        cpu.shr(RegisterLabel::V0);
-        // Expect V0 becomes 5 >> 1 = 2 and VF becomes 1
-        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 2);
-        assert_eq!(cpu.read_register(RegisterLabel::VF)?, 1);
-
-        // Case where LSB is 0: for example V1 = 4 (binary 0100)
-        cpu.write_register(RegisterLabel::V1, 4)?;
-        cpu.shr(RegisterLabel::V1);
-        // Expect V1 becomes 4 >> 1 = 2 and VF becomes 0
-        assert_eq!(cpu.read_register(RegisterLabel::V1)?, 2);
-        assert_eq!(cpu.read_register(RegisterLabel::VF)?, 0);
-        Ok(())
-    }
-
-    #[test]
     fn subn_xy_operation_no_borrow() -> Result<(), CpuError> {
         // Test 8xy7 SUBN: if Vy > Vx then VF is set to 1 and Vx becomes Vy - Vx
         let mut cpu = Cpu::default();
@@ -1034,23 +1119,232 @@ mod tests {
 
     #[test]
     fn shl_operation() -> Result<(), CpuError> {
+        // Test case 1: Use V0 with MSB set
+        // Program:
+        // 6090: LD V0, 0x90    (set V0 = 0x90)
+        // 800E: SHL V0        (shift V0 left; VF gets MSB)
+        // 1FFF: JP 0xFFF      (halt)
+        let opcodes_v0 = [
+            (0x0200, 0x6090), // LD V0, 0x90
+            (0x0202, 0x800E), // SHL V0
+            (0x0204, 0x1FFF), // Halt
+        ];
+        {
+            let mut cpu = Cpu::default();
+            cpu.write_opcode_batch(&opcodes_v0)?;
+            cpu.run()?;
+            // 0x90 (1001 0000) shifted left becomes 0x20 and VF should be 1 since the MSB was 1
+            assert_eq!(cpu.read_register(RegisterLabel::V0)?, 0x20);
+            assert_eq!(cpu.read_register(RegisterLabel::VF)?, 1);
+        }
+
+        // Test case 2: Use V1 with MSB not set
+        // Program:
+        // 6130: LD V1, 0x30    (set V1 = 0x30)
+        // 811E: SHL V1        (shift V1 left; VF gets MSB)
+        // 1FFF: JP 0xFFF      (halt)
+        let opcodes_v1 = [
+            (0x0200, 0x6130), // LD V1, 0x30
+            (0x0202, 0x811E), // SHL V1
+            (0x0204, 0x1FFF), // Halt
+        ];
+        {
+            let mut cpu = Cpu::default();
+            cpu.write_opcode_batch(&opcodes_v1)?;
+            cpu.run()?;
+            // 0x30 (0011 0000) shifted left becomes 0x60 and VF should be 0 since the MSB was 0
+            assert_eq!(cpu.read_register(RegisterLabel::V1)?, 0x60);
+            assert_eq!(cpu.read_register(RegisterLabel::VF)?, 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shr_operation() -> Result<(), CpuError> {
+        // Test case 1: Use V0 where LSB is 1
+        // Program:
+        // 6005: LD V0, 0x05    (set V0 = 5; binary 0101)
+        // 8006: SHR V0        (shift V0 right; VF gets LSB)
+        // 1FFF: JP 0xFFF      (halt)
+        let opcodes_v0 = [
+            (0x0200, 0x6005), // LD V0, 0x05
+            (0x0202, 0x8006), // SHR V0
+            (0x0204, 0x1FFF), // Halt
+        ];
+        {
+            let mut cpu = Cpu::default();
+            cpu.write_opcode_batch(&opcodes_v0)?;
+            cpu.run()?;
+            // 5 >> 1 = 2 and VF becomes 5 & 1 = 1 (since 5 is 0101 in binary)
+            assert_eq!(cpu.read_register(RegisterLabel::V0)?, 2);
+            assert_eq!(cpu.read_register(RegisterLabel::VF)?, 1);
+        }
+
+        // Test case 2: Use V1 where LSB is 0
+        // Program:
+        // 6104: LD V1, 0x04    (set V1 = 4; binary 0100)
+        // 8106: SHR V1        (shift V1 right; VF gets LSB)
+        // 1FFF: JP 0xFFF      (halt)
+        let opcodes_v1 = [
+            (0x0200, 0x6104), // LD V1, 0x04
+            (0x0202, 0x8106), // SHR V1
+            (0x0204, 0x1FFF), // Halt
+        ];
+        {
+            let mut cpu = Cpu::default();
+            cpu.write_opcode_batch(&opcodes_v1)?;
+            cpu.run()?;
+            // 4 >> 1 = 2 and VF becomes 4 & 1 = 0 (since 4 is 0100 in binary)
+            assert_eq!(cpu.read_register(RegisterLabel::V1)?, 2);
+            assert_eq!(cpu.read_register(RegisterLabel::VF)?, 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ld_from_registers_operation() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 
-        // Case 1: V0 has its MSB set
-        // For example, 0x90 is 1001 0000 in binary
-        // The MSB is 1 so VF should be set to 1 and V0 becomes 0x90 << 1 = 0x20
-        cpu.write_register(RegisterLabel::V0, 0x90)?;
-        cpu.shl(RegisterLabel::V0);
-        assert_eq!(cpu.read_register(RegisterLabel::VF)?, 1);
-        assert_eq!(cpu.read_register(RegisterLabel::V0)?, 0x20);
+        // Program:
+        // 6000: LD V0, 0       (set V0 = 0)
+        // 6102: LD V1, 2       (set V1 = 2)
+        // 6204: LD V2, 4       (set V2 = 4)
+        // 6306: LD V3, 6       (set V3 = 6)
+        // 6408: LD V4, 8       (set V4 = 8)
+        // 650A: LD V5, 10      (set V5 = 10)
+        // A0C8: LDI 0x0C8     (set I = 200)
+        // F555: LD [I], V5   (store registers V0 through V5 into memory)
+        // 1FFF: JP 0xFFF     (halt)
+        let opcodes = [
+            (0x0200, 0x6000),
+            (0x0202, 0x6102),
+            (0x0204, 0x6204),
+            (0x0206, 0x6306),
+            (0x0208, 0x6408),
+            (0x020A, 0x650A),
+            (0x020C, 0xA0C8),
+            (0x020E, 0xF555),
+            (0x0210, 0x1FFF),
+        ];
+        cpu.write_opcode_batch(&opcodes)?;
 
-        // Case 2: V1 has its MSB not set
-        // For example, 0x30 is 0011 0000 in binary
-        // The MSB is 0 so VF should be set to 0 and V1 becomes 0x30 << 1 = 0x60
-        cpu.write_register(RegisterLabel::V1, 0x30)?;
-        cpu.shl(RegisterLabel::V1);
-        assert_eq!(cpu.read_register(RegisterLabel::VF)?, 0);
-        assert_eq!(cpu.read_register(RegisterLabel::V1)?, 0x60);
+        cpu.run()?;
+
+        // Verify that memory from I (200) to I + 5 contains registers V0 through V5
+        for i in 0..=5 {
+            assert_eq!(cpu.memory[200 + i as usize], cpu.registers[i as usize])
+        }
+
+        // Verify that the next memory cell remains unchanged (should be 0)
+        assert_eq!(cpu.memory[206], 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ld_to_registers_operation() -> Result<(), CpuError> {
+        let mut cpu = Cpu::default();
+
+        // Preload memory values at address 150 with known data
+        // Memory at 150 to 155 should be: 11, 22, 33, 44, 55, 66
+        cpu.write_memory(150, 11)?;
+        cpu.write_memory(151, 22)?;
+        cpu.write_memory(152, 33)?;
+        cpu.write_memory(153, 44)?;
+        cpu.write_memory(154, 55)?;
+        cpu.write_memory(155, 66)?;
+
+        // Program:
+        // A096: LDI 0x096    (set I = 150)
+        // F565: LD V0-V5, [I] (read registers V0 through V5 from memory)
+        // 1FFF: JP 0xFFF     (halt)
+        let opcodes = [(0x0200, 0xA096), (0x0202, 0xF565), (0x0204, 0x1FFF)];
+        cpu.write_opcode_batch(&opcodes)?;
+
+        cpu.run()?;
+
+        // Verify that registers V0 through V5 have been loaded with memory values from I to I+5
+        assert_eq!(cpu.registers[0], 11);
+        assert_eq!(cpu.registers[1], 22);
+        assert_eq!(cpu.registers[2], 33);
+        assert_eq!(cpu.registers[3], 44);
+        assert_eq!(cpu.registers[4], 55);
+        assert_eq!(cpu.registers[5], 66);
+
+        // Verify that register V6 remains unchanged (should be 0)
+        assert_eq!(cpu.registers[6], 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ld_bcd_operation() -> Result<(), CpuError> {
+        // Test Fx33 for register V1 with value 123
+        // 0x200: 0x617B -> LD V1, 0x7B (set V1 to 123)
+        // 0x202: 0xA12C -> LDI 0x12C (set I to 300 decimal)
+        // 0x204: 0xF133 -> Fx33 (store BCD of V1 in memory at I, I+1, I+2)
+        // 0x206: 0x1FFF -> JP 0xFFF (halt execution)
+        let mut cpu = Cpu::default();
+        let opcodes_v1 = [
+            (0x0200, 0x617B),
+            (0x0202, 0xA12C),
+            (0x0204, 0xF133),
+            (0x0206, 0x1FFF),
+        ];
+        cpu.write_opcode_batch(&opcodes_v1)?;
+        cpu.run()?;
+
+        // Read memory using the API to verify the BCD digits for 123 are stored correctly
+        let hundreds = cpu.read_memory(300)?;
+        let tens = cpu.read_memory(301)?;
+        let ones = cpu.read_memory(302)?;
+        assert_eq!(hundreds, 1);
+        assert_eq!(tens, 2);
+        assert_eq!(ones, 3);
+
+        // Test Fx33 for register V2 with value 0
+        // 0x200: 0x6200 -> LD V2, 0x00 (set V2 to 0)
+        // 0x202: 0xA136 -> LDI 0x136 (set I to 310 decimal)
+        // 0x204: 0xF233 -> Fx33 (store BCD of V2 in memory at I, I+1, I+2)
+        // 0x206: 0x1FFF -> JP 0xFFF (halt execution)
+        let mut cpu = Cpu::default();
+        let opcodes_v2 = [
+            (0x0200, 0x6200),
+            (0x0202, 0xA136),
+            (0x0204, 0xF233),
+            (0x0206, 0x1FFF),
+        ];
+        cpu.write_opcode_batch(&opcodes_v2)?;
+        cpu.run()?;
+
+        let hundreds = cpu.read_memory(310)?;
+        let tens = cpu.read_memory(311)?;
+        let ones = cpu.read_memory(312)?;
+        assert_eq!(hundreds, 0);
+        assert_eq!(tens, 0);
+        assert_eq!(ones, 0);
+
+        // Test Fx33 for register V3 with value 255
+        // 0x200: 0x63FF -> LD V3, 0xFF (set V3 to 255)
+        // 0x202: 0xA144 -> LDI 0x144 (set I to 324 decimal)
+        // 0x204: 0xF333 -> Fx33 (store BCD of V3 in memory at I, I+1, I+2)
+        // 0x206: 0x1FFF -> JP 0xFFF (halt execution)
+        let mut cpu = Cpu::default();
+        let opcodes_v3 = [
+            (0x0200, 0x63FF),
+            (0x0202, 0xA144),
+            (0x0204, 0xF333),
+            (0x0206, 0x1FFF),
+        ];
+        cpu.write_opcode_batch(&opcodes_v3)?;
+        cpu.run()?;
+
+        let hundreds = cpu.read_memory(324)?;
+        let tens = cpu.read_memory(325)?;
+        let ones = cpu.read_memory(326)?;
+        assert_eq!(hundreds, 2);
+        assert_eq!(tens, 5);
+        assert_eq!(ones, 5);
 
         Ok(())
     }
