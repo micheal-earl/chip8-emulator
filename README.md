@@ -26,5 +26,5 @@ cargo test
 
 ## Attributions
 
-Corax98 for the test_opcode.ch8 rom
+Corax98 for the test_opcode.ch8 rom  
 Cowgod for his Chip-8 technical reference
