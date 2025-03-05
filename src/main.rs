@@ -1,7 +1,7 @@
 pub mod cpu;
 pub mod rom;
 
-use cpu::{Cpu, CpuError, DURATION_700HZ_IN_MICROS, HEIGHT, WIDTH};
+use cpu::{Cpu, CpuError, DURATION_60HZ_IN_MICROS, DURATION_700HZ_IN_MICROS, HEIGHT, WIDTH};
 use minifb::{Key, Scale, ScaleMode, Window, WindowOptions};
 use std::env;
 use std::path::Path;
@@ -78,6 +78,7 @@ fn main() -> Result<(), &'static str> {
         // Load ROM from file provided as command-line argument
         let rom_path = &args[1];
         println!("Loading ROM: {}", rom_path);
+        // TODO Fix awful rom API
         let mut rom = rom::Rom::default();
         rom.open_file(Path::new(rom_path));
         rom.get_instructions()?;
@@ -113,13 +114,17 @@ fn main() -> Result<(), &'static str> {
     }
 
     // Spawn a separate thread to run the CPU.
+    // TODO There is repeat code here that appears in cpu.run()
+    // Find a way to reduce repeated code
     let cpu_clone = Arc::clone(&cpu);
     thread::spawn(move || -> Result<(), CpuError> {
         use std::thread::sleep;
-        use std::time::Instant;
+        use std::time;
 
-        let interval = DURATION_700HZ_IN_MICROS;
-        let mut time_after_interval = Instant::now() + interval;
+        let cycle_interval = DURATION_700HZ_IN_MICROS;
+        let sound_and_delay_interval = DURATION_60HZ_IN_MICROS;
+        let mut last_sd_update = time::Instant::now();
+        let mut next_cycle = time::Instant::now() + cycle_interval;
 
         loop {
             {
@@ -129,15 +134,30 @@ fn main() -> Result<(), &'static str> {
                 if !cpu.step()? {
                     break;
                 }
+
+                // Update timers if 1/60 sec has elapsed
+                let now = time::Instant::now();
+                if now.duration_since(last_sd_update) >= sound_and_delay_interval {
+                    let delay_counter = cpu.read_delay();
+                    if delay_counter > 0 {
+                        cpu.write_delay(delay_counter - 1);
+                    }
+                    let sound_counter = cpu.read_sound();
+                    if sound_counter > 0 {
+                        cpu.write_sound(sound_counter - 1);
+                        // TODO Play sound
+                    }
+                    last_sd_update = now;
+                }
             }
 
             // Sleep until the next cycle
-            let now = Instant::now();
-            if now < time_after_interval {
-                sleep(time_after_interval - now);
+            let now = time::Instant::now();
+            if now < next_cycle {
+                sleep(next_cycle - now);
             }
 
-            time_after_interval += interval;
+            next_cycle += cycle_interval;
         }
 
         Ok(())

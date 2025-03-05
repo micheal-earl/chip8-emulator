@@ -9,17 +9,22 @@ cargo install
 ```
 
 ```shell
-cargo run "IBM Logo.ch8"
+cargo run .\\roms\\test\\test_opcode.ch8
 ```
 
 or
 
 ```shell
-cargo run test_opcode.ch8
+cargo run .\\roms\\games\\Airplane.ch8
 ```
 
-tests
+## tests
 
 ```shell
 cargo test
 ```
+
+## Attributions
+
+Corax98 for the test_opcode.ch8 rom
+Cowgod for his Chip-8 technical reference

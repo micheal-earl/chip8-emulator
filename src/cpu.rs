@@ -99,7 +99,8 @@ const FONT_DATA: [u8; 80] = [
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 ];
 
-pub const DURATION_700HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1428);
+pub const DURATION_700HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1_000_000 / 700);
+pub const DURATION_60HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1_000_000 / 60);
 pub const DURATION_1HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1_000_000);
 
 // TODO Solidify this mapping somewhere for the api?
@@ -268,9 +269,10 @@ impl Cpu {
 
     /// Runs the cpu, stepping through instructions until end of memory
     pub fn run(&mut self) -> Result<(), CpuError> {
-        // TODO: Add 60hz timer for sound and delay
-        let interval = DURATION_700HZ_IN_MICROS;
-        let mut time_after_interval = time::Instant::now() + interval;
+        let cycle_interval = DURATION_700HZ_IN_MICROS;
+        let sound_and_delay_interval = DURATION_60HZ_IN_MICROS;
+        let mut last_sd_update = time::Instant::now();
+        let mut next_cycle = time::Instant::now() + cycle_interval;
 
         loop {
             let s = self.step()?;
@@ -278,13 +280,26 @@ impl Cpu {
                 break;
             }
 
-            // Sleep until the next cycle
+            // Update timers if 1/60 sec has elapsed
             let now = time::Instant::now();
-            if now < time_after_interval {
-                thread::sleep(time_after_interval - now);
+            if now.duration_since(last_sd_update) >= sound_and_delay_interval {
+                if self.delay > 0 {
+                    self.delay -= 1;
+                }
+                if self.sound > 0 {
+                    self.sound -= 1;
+                    // Optionally trigger a beep here if sound > 0
+                }
+                last_sd_update = now;
             }
 
-            time_after_interval += interval;
+            // Sleep until the next cycle
+            let now = time::Instant::now();
+            if now < next_cycle {
+                thread::sleep(next_cycle - now);
+            }
+
+            next_cycle += cycle_interval;
         }
 
         Ok(())
@@ -785,6 +800,22 @@ impl Cpu {
 
     pub fn key_down(&mut self, key: u8) {
         self.keyboard[key as usize] = true;
+    }
+
+    pub fn read_delay(&mut self) -> u8 {
+        self.delay
+    }
+
+    pub fn read_sound(&mut self) -> u8 {
+        self.sound
+    }
+
+    pub fn write_delay(&mut self, value: u8) {
+        self.delay = value;
+    }
+
+    pub fn write_sound(&mut self, value: u8) {
+        self.sound = value;
     }
 }
 
