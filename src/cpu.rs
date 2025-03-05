@@ -102,30 +102,58 @@ const FONT_DATA: [u8; 80] = [
 pub const DURATION_700HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1428);
 pub const DURATION_1HZ_IN_MICROS: time::Duration = time::Duration::from_micros(1_000_000);
 
+// TODO Solidify this mapping somewhere for the api?
+// Keyboard layout
+
+// Original CHIP-8 Keypad:
+// 1 2 3 C
+// 4 5 6 D
+// 7 8 9 E
+// A 0 B F
+
+// Emulated CHIP-8 Keypad:
+// 1 2 3 4
+// Q W E R
+// A S D F
+// Z X C V
+
 pub struct Cpu {
     registers: [Register; 16],
     memory: [Register; 4096],
     stack: [Register16; 16],
     display: Display, //[[u8; 64]; 32],
-    delay: Register,  // TODO delay timer
-    sound: Register,  // TODO sound timer
+    keyboard: [bool; 16],
+    delay: Register, // TODO delay timer
+    sound: Register, // TODO sound timer
     index: Register16,
     stack_pointer: usize,
     program_counter: usize,
+    rng: u8,
+    lock: bool,
 }
 
 impl Default for Cpu {
     fn default() -> Self {
+        // Get the current time in nanoseconds and cast to u8 for our rng
+        let nanos = time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_nanos();
+        let seed = (nanos & 0xFFFF_FFFF) as u8;
+
         let mut cpu = Self {
             registers: [0; 16],
             memory: [0; 4096],
             stack: [0; 16],
             display: [0; 256],
+            keyboard: [false; 16],
             delay: 0,
             sound: 0,
             index: 0,
             stack_pointer: 0,
             program_counter: 0x0200,
+            rng: seed,
+            lock: false,
         };
 
         cpu.write_fonts_to_memory();
@@ -152,7 +180,9 @@ impl Cpu {
         }
         // DEBUG ^
 
-        self.program_counter += 2;
+        if !self.lock {
+            self.program_counter += 2;
+        }
 
         op_high_byte << 8 | op_low_byte
     }
@@ -213,32 +243,20 @@ impl Cpu {
                 0xE => self.shl(vx),
                 _ => return Err("0x8 instruction with unknown d value"),
             },
-            (0x9, _, _, 0x0) => {
-                self.sne_xy(vx, vy)
-                // 9xy0 Skip next instruction if Vx != Vy
-            }
+            (0x9, _, _, 0x0) => self.sne_xy(vx, vy), // 9xy0 Skip next instruction if Vx != Vy
             (0xA, _, _, _) => self.ldi(nnn),
-            (0xB, _, _, _) => todo!("Bnnn JP V0, addr"),
-            (0xC, _, _, _) => todo!("Cxkk RND Vx, byte"),
-            (0xD, _, _, _) => {
-                self.drw(RegisterLabel::try_from(x)?, RegisterLabel::try_from(y)?, d)?
-                // Dxyn Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
-            }
-            // TODO Use nested match statements like the 0x8 insturctions?
-            (0xE, _, 0x9, 0xE) => todo!("Ex9E SKP - Skip next instruction if key Vx is pressed"),
-            (0xE, _, 0xA, 0x1) => {
-                todo!("ExA1 SKNP - Skip next instruction if key Vx is not pressed")
-            }
-            (0xF, _, 0x0, 0x7) => {
-                todo!("Fx07 LD Vx, delay - value of delay timer is placed into Vx")
-            }
-            (0xF, _, 0x0, 0xA) => {
-                todo!("Fx0A LD Vx, delay - value of delay timer is placed into Vx")
-            }
-            (0xF, _, 0x1, 0x5) => todo!("Fx15 LD delay, Vx - delay is set to Vx"),
-            (0xF, _, 0x1, 0x8) => todo!("Fx18 LD sound, Vx - sound is set to Vx"),
-            (0xF, _, 0x1, 0xE) => todo!("Fx1E LD delay, Vx - delay is set to Vx"),
-            (0xF, _, 0x2, 0x9) => todo!("Fx29 LD F, Vx"),
+            (0xB, _, _, _) => self.jmp_x(nnn),
+            (0xC, _, _, _) => self.rnd(vx, kk),
+            (0xD, _, _, _) => self.drw(vx, vy, d)?, // Dxyn Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
+            // TODO Use nested match statements like the 0x8 instructions?
+            (0xE, _, 0x9, 0xE) => self.skp(vx),
+            (0xE, _, 0xA, 0x1) => self.sknp(vx),
+            (0xF, _, 0x0, 0x7) => self.ld_from_delay(vx),
+            (0xF, _, 0x0, 0xA) => self.ld_from_key(vx),
+            (0xF, _, 0x1, 0x5) => self.ld_to_delay(vx),
+            (0xF, _, 0x1, 0x8) => self.ld_to_sound(vx),
+            (0xF, _, 0x1, 0xE) => self.add_i(vx),
+            (0xF, _, 0x2, 0x9) => self.ld_i(vx),
             (0xF, _, 0x3, 0x3) => self.ld_bcd(vx),
             (0xF, _, 0x5, 0x5) => self.ld_from_registers(vx),
             (0xF, _, 0x6, 0x5) => self.ld_to_registers(vx),
@@ -441,14 +459,20 @@ impl Cpu {
     }
 
     /// Bnnn JP - The program counter is set to nnn plus the value of V0.
-    fn jmp_x() {
-        todo!()
+    fn jmp_x(&mut self, nnn: u16) {
+        self.program_counter = nnn as usize + (self.registers[0] as usize);
     }
 
     /// Cxkk RND - The interpreter generates a random number from 0 to 255, which is then ANDed with the value kk.
     /// The results are stored in Vx.
-    fn rnd() {
-        todo!()
+    fn rnd(&mut self, vx: RegisterLabel, kk: u8) {
+        // Update the RNG state using a simple 8-bit linear congruential generator
+        // We choose a multiplier of 37 and an increment of 1 which yields a full period mod 256
+        self.rng = self.rng.wrapping_mul(37).wrapping_add(1);
+        // Use the new state as the random value (0..=255)
+        let random_value = self.rng;
+        // Store the result of random_value AND kk in Vx
+        self.registers[vx as usize] = random_value & kk;
     }
 
     /// Dxyn DRW - Display d-byte sprite starting at memory location I at (Vx, Vy)  
@@ -519,54 +543,66 @@ impl Cpu {
 
     /// Ex9E SKP - Skip next instruction if key with the value of Vx is pressed
     /// Checks the keyboard, and if the key corresponding to the value of Vx is currently in the down position, PC is increased by 2
-    fn skp() {
-        todo!()
+    fn skp(&mut self, vx: RegisterLabel) {
+        if self.keyboard[self.registers[vx as usize] as usize] {
+            self.program_counter += 2;
+        }
     }
 
     /// ExA1 SKNP - Skip next instruction if key with the value of Vx is not pressed
     /// Checks the keyboard, and if the key corresponding to the value of Vx is currently in the up position, PC is increased by 2
-    fn sknp() {
-        todo!()
+    fn sknp(&mut self, vx: RegisterLabel) {
+        if !self.keyboard[self.registers[vx as usize] as usize] {
+            self.program_counter += 2;
+        }
     }
 
     /// Fx07 LD - Set Vx = delay timer value
     /// The value of DT is placed into Vx
-    fn ld_from_delay() {
-        todo!()
+    fn ld_from_delay(&mut self, vx: RegisterLabel) {
+        self.registers[vx as usize] = self.delay;
     }
 
     /// Fx0A LD - Wait for a key press, store the value of the key in Vx
     /// All execution stops until a key is pressed, then the value of that key is stored in Vx
-    fn ld_from_key() {
-        todo!()
+    fn ld_from_key(&mut self, vx: RegisterLabel) {
+        self.lock = true;
+        for i in 0..self.keyboard.len() {
+            if self.keyboard[i] {
+                self.registers[vx as usize] = i as u8;
+                self.lock = false;
+                break;
+            }
+        }
     }
 
     /// Fx15 - LD DT, Vx
     /// Set delay timer = Vx
     /// DT is set equal to the value of Vx
-    fn ld_to_delay() {
-        todo!()
+    fn ld_to_delay(&mut self, vx: RegisterLabel) {
+        self.delay = self.registers[vx as usize];
     }
 
     /// Fx18 - LD ST, Vx
     /// Set sound timer = Vx
     /// ST is set equal to the value of Vx
-    fn ld_to_sound() {
-        todo!()
+    fn ld_to_sound(&mut self, vx: RegisterLabel) {
+        self.sound = self.registers[vx as usize];
     }
 
     /// Fx1E - ADD I, Vx
     /// Set I = I + Vx
     /// The values of I and Vx are added, and the results are stored in I
-    fn add_i() {
-        todo!()
+    fn add_i(&mut self, vx: RegisterLabel) {
+        self.index += self.registers[vx as usize] as u16;
     }
 
     /// Fx29 - LD F, Vx  
-    /// Set I = location of sprite for digit Vx  
+    /// Set I = location of sprite for font digit Vx  
     /// The value of I is set to the location for the hexadecimal sprite corresponding to the value of Vx
-    fn ld_i() {
-        todo!()
+    fn ld_i(&mut self, vx: RegisterLabel) {
+        let digit = self.registers[vx as usize];
+        self.index = (digit as u16) * 5;
     }
 
     /// Fx33 - LD B, Vx
@@ -611,10 +647,19 @@ impl Cpu {
         }
     }
 
+    /// Write multiple opcodes to memory at several memory locations
+    fn write_fonts_to_memory(&mut self) {
+        // The font data occupies 80 bytes starting at memory address 0x000.
+        // We don't use write_memory_batch here as that would be slower
+        let start = 0x000;
+        let end = start + FONT_DATA.len();
+        self.memory[start..end].copy_from_slice(&FONT_DATA);
+    }
+
     /// Helper to get the value of an individual pixel from the bit-packed display  
     /// The display is stored as 256 u8’s, each holding 8 pixels  
     /// `pixel` is the overall pixel index (0..2047)  
-    fn get_display_pixel(&self, pixel_index: u16) -> u8 {
+    pub fn get_display_pixel(&self, pixel_index: u16) -> u8 {
         let byte_index = (pixel_index / 8) as usize;
         let bit_index = 7 - (pixel_index % 8);
         (self.display[byte_index] >> bit_index) & 1
@@ -734,13 +779,12 @@ impl Cpu {
         Ok(())
     }
 
-    /// Write multiple opcodes to memory at several memory locations
-    fn write_fonts_to_memory(&mut self) {
-        // The font data occupies 80 bytes starting at memory address 0x000.
-        // We don't use write_memory_batch here as that would be slower
-        let start = 0x000;
-        let end = start + FONT_DATA.len();
-        self.memory[start..end].copy_from_slice(&FONT_DATA);
+    pub fn reset_keyboard(&mut self) {
+        self.keyboard = [false; 16];
+    }
+
+    pub fn key_down(&mut self, key: u8) {
+        self.keyboard[key as usize] = true;
     }
 }
 
@@ -1346,6 +1390,27 @@ mod tests {
         assert_eq!(tens, 5);
         assert_eq!(ones, 5);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_rnd_opcode() -> Result<(), CpuError> {
+        // create a CPU instance
+        let mut cpu = Cpu::default();
+        // set a known RNG seed so the output is predictable
+        cpu.rng = 123;
+        // write opcodes to run the RND instruction on V0 with mask 0xFF
+        // 0xC0FF: RND V0, 0xFF (generate a random number and AND with 0xFF, storing the result in V0)
+        // 0x1FFF: JP 0xFFF (halt execution)
+        let opcodes = [(0x0200, 0xC0FF), (0x0202, 0x1FFF)];
+        cpu.write_opcode_batch(&opcodes)?;
+        cpu.run()?;
+
+        // given the LCG update, new rng = 123 * 37 + 1 = 4552
+        // the value stored in V0 is 4552 & 0xFF which equals 200
+        let expected: u8 = 200;
+        let v0 = cpu.read_register(RegisterLabel::V0)?;
+        assert_eq!(v0, expected, "Expected V0 to be {}, got {}", expected, v0);
         Ok(())
     }
 

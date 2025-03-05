@@ -26,6 +26,48 @@ fn display_buffer_to_rgb(buffer: &[u8]) -> Vec<u32> {
     pixels
 }
 
+fn update_cpu_keyboard(cpu: &mut Cpu, window: &Window) {
+    // Clear all keys first
+    cpu.reset_keyboard();
+
+    // Keyboard layout
+
+    // Original CHIP-8 Keypad:
+    // 1 2 3 C
+    // 4 5 6 D
+    // 7 8 9 E
+    // A 0 B F
+
+    // Emulated CHIP-8 Keypad:
+    // 1 2 3 4
+    // Q W E R
+    // A S D F
+    // Z X C V
+
+    // Get the list of pressed keys from the window
+    for key in window.get_keys() {
+        match key {
+            Key::Key1 => cpu.key_down(0x1),
+            Key::Key2 => cpu.key_down(0x2),
+            Key::Key3 => cpu.key_down(0x3),
+            Key::Key4 => cpu.key_down(0xC),
+            Key::Q => cpu.key_down(0x4),
+            Key::W => cpu.key_down(0x5),
+            Key::E => cpu.key_down(0x6),
+            Key::R => cpu.key_down(0xD),
+            Key::A => cpu.key_down(0x7),
+            Key::S => cpu.key_down(0x8),
+            Key::D => cpu.key_down(0x9),
+            Key::F => cpu.key_down(0xE),
+            Key::Z => cpu.key_down(0xA),
+            Key::X => cpu.key_down(0x0),
+            Key::C => cpu.key_down(0xB),
+            Key::V => cpu.key_down(0xF),
+            _ => {}
+        }
+    }
+}
+
 fn main() -> Result<(), &'static str> {
     let args: Vec<String> = env::args().collect();
 
@@ -119,6 +161,11 @@ fn main() -> Result<(), &'static str> {
     window.set_target_fps(60);
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
+        {
+            // Lock the CPU and update its keyboard state
+            let mut cpu_lock = cpu.lock().unwrap();
+            update_cpu_keyboard(&mut cpu_lock, &window);
+        }
         // Fetch the display buffer from the CPU.
         let display_buffer = {
             let cpu_lock = cpu.lock().unwrap();
