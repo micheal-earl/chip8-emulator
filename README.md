@@ -9,13 +9,13 @@ cargo install
 ```
 
 ```shell
-cargo run .\\roms\\test\\test_opcode.ch8
+cargo run .\roms\test\test_opcode.ch8
 ```
 
 or
 
 ```shell
-cargo run .\\roms\\games\\Airplane.ch8
+cargo run .\roms\games\Airplane.ch8
 ```
 
 ## tests
