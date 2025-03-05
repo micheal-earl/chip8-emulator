@@ -1446,6 +1446,168 @@ mod tests {
     }
 
     #[test]
+    fn jmp_x_operation() -> Result<(), CpuError> {
+        let mut cpu = Cpu::default();
+        // LD V0, 5
+        cpu.write_opcode_batch(&[(0x0200, 0x6005)])?;
+        // JMP X: Jump to address 0x0210 using V0 value (0xB20B because 0x20B + 5 = 0x210)
+        cpu.write_opcode_batch(&[(0x0202, 0xB20B)])?;
+        // At address 0x0210, load V1 with 0xAA and then halt
+        cpu.write_opcode_batch(&[(0x0210, 0x61AA), (0x0212, 0x1FFF)])?;
+        cpu.run()?;
+        assert_eq!(cpu.read_register(RegisterLabel::V1)?, 0xAA);
+        Ok(())
+    }
+
+    #[test]
+    fn skp_operation() -> Result<(), CpuError> {
+        let mut cpu = Cpu::default();
+        // LD V1, 3 so that V1 holds the key index to check
+        cpu.write_opcode_batch(&[(0x0200, 0x6103)])?;
+        // Set keyboard[3] to true to simulate key press
+        cpu.keyboard[3] = true;
+        // SKP V1: if key 3 is pressed the next instruction will be skipped
+        cpu.write_opcode_batch(&[(0x0202, 0xE19E)])?;
+        // LD V2, 0x55 which should be skipped
+        cpu.write_opcode_batch(&[(0x0204, 0x6255)])?;
+        // LD V2, 0xAA which should execute after skip
+        cpu.write_opcode_batch(&[(0x0206, 0x62AA), (0x0208, 0x1FFF)])?;
+        cpu.run()?;
+        assert_eq!(cpu.read_register(RegisterLabel::V2)?, 0xAA);
+        Ok(())
+    }
+
+    #[test]
+    fn sknp_operation() -> Result<(), CpuError> {
+        // Scenario 1: Key not pressed so the next instruction is skipped
+        {
+            let mut cpu = Cpu::default();
+            // LD V0, 4 so that V0 holds the key index to check
+            cpu.write_opcode_batch(&[(0x0200, 0x6004)])?;
+            // Ensure keyboard[4] is false
+            cpu.keyboard[4] = false;
+            // SKNP V0: if key 4 is not pressed, the next instruction will be skipped
+            cpu.write_opcode_batch(&[(0x0202, 0xE0A1)])?;
+            // LD V1, 0x55 which should be skipped
+            cpu.write_opcode_batch(&[(0x0204, 0x6155)])?;
+            // LD V1, 0xAA which should execute
+            cpu.write_opcode_batch(&[(0x0206, 0x61AA), (0x0208, 0x1FFF)])?;
+            cpu.run()?;
+            assert_eq!(cpu.read_register(RegisterLabel::V1)?, 0xAA);
+        }
+        // Scenario 2: Key pressed so the next instruction is not skipped
+        {
+            let mut cpu = Cpu::default();
+            // LD V0, 4 so that V0 holds the key index to check
+            cpu.write_opcode_batch(&[(0x0200, 0x6004)])?;
+            // Set keyboard[4] to true to simulate key press
+            cpu.keyboard[4] = true;
+            // SKNP V0: since key 4 is pressed the next instruction will not be skipped
+            cpu.write_opcode_batch(&[(0x0202, 0xE0A1)])?;
+            // LD V1, 0x55 which should execute
+            cpu.write_opcode_batch(&[(0x0204, 0x6155), (0x0206, 0x1FFF)])?;
+            cpu.run()?;
+            assert_eq!(cpu.read_register(RegisterLabel::V1)?, 0x55);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ld_from_delay_operation() -> Result<(), CpuError> {
+        let mut cpu = Cpu::default();
+        // Manually set delay timer to 77
+        cpu.delay = 77;
+        // LD from delay: Fx07 for V1 will load the delay timer into V1
+        cpu.write_opcode_batch(&[(0x0200, 0xF107), (0x0202, 0x1FFF)])?;
+        cpu.run()?;
+        assert_eq!(cpu.read_register(RegisterLabel::V1)?, 77);
+        Ok(())
+    }
+
+    #[test]
+    fn ld_from_key_operation() -> Result<(), CpuError> {
+        let mut cpu = Cpu::default();
+        // Set keyboard: simulate key 7 being pressed
+        cpu.keyboard[7] = true;
+        // LD from key: Fx0A for V1 will wait for a key press and load its value into V1
+        cpu.write_opcode_batch(&[(0x0200, 0xF10A), (0x0202, 0x1FFF)])?;
+        cpu.run()?;
+        assert_eq!(cpu.read_register(RegisterLabel::V1)?, 7);
+        Ok(())
+    }
+
+    #[test]
+    fn ld_to_delay_operation() -> Result<(), CpuError> {
+        let mut cpu = Cpu::default();
+        // LD V1, 0x21 to load 33 into V1
+        cpu.write_opcode_batch(&[(0x0200, 0x6121)])?;
+        // LD to delay: Fx15 for V1 stores V1 into the delay timer
+        cpu.write_opcode_batch(&[(0x0202, 0xF115), (0x0204, 0x1FFF)])?;
+        cpu.run()?;
+        assert_eq!(cpu.delay, 0x21);
+        Ok(())
+    }
+
+    #[test]
+    fn ld_to_sound_operation() -> Result<(), CpuError> {
+        let mut cpu = Cpu::default();
+        // LD V3, 0x2C to load 44 into V3
+        cpu.write_opcode_batch(&[(0x0200, 0x632C)])?;
+        // LD to sound: Fx18 for V3 stores V3 into the sound timer
+        cpu.write_opcode_batch(&[(0x0202, 0xF318), (0x0204, 0x1FFF)])?;
+        cpu.run()?;
+        assert_eq!(cpu.sound, 0x2C);
+        Ok(())
+    }
+
+    #[test]
+    fn add_i_operation() -> Result<(), CpuError> {
+        let mut cpu = Cpu::default();
+        // LD V0, 0x0A to load 10 into V0
+        cpu.write_opcode_batch(&[(0x0200, 0x600A)])?;
+        // ADD I, V0: F01E for V0 adds V0 to the index register
+        cpu.write_opcode_batch(&[(0x0202, 0xF01E), (0x0204, 0x1FFF)])?;
+        cpu.run()?;
+        assert_eq!(cpu.index, 10);
+        Ok(())
+    }
+
+    #[test]
+    fn ld_i_operation() -> Result<(), CpuError> {
+        let mut cpu = Cpu::default();
+        // LD V1, 7 to load 7 into V1
+        cpu.write_opcode_batch(&[(0x0200, 0x6107)])?;
+        // LD I: Fx29 for V1 sets I to 7 * 5
+        cpu.write_opcode_batch(&[(0x0202, 0xF129), (0x0204, 0x1FFF)])?;
+        cpu.run()?;
+        assert_eq!(cpu.index, 7 * 5);
+        Ok(())
+    }
+
+    #[test]
+    fn reset_keyboard_operation() -> Result<(), CpuError> {
+        let mut cpu = Cpu::default();
+        // Set some keys to true
+        cpu.keyboard[2] = true;
+        cpu.keyboard[5] = true;
+        // Reset the keyboard
+        cpu.reset_keyboard();
+        for &key in cpu.keyboard.iter() {
+            assert!(!key);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn key_down_operation() -> Result<(), CpuError> {
+        let mut cpu = Cpu::default();
+        // Simulate key 5 being pressed
+        cpu.key_down(5);
+        assert!(cpu.keyboard[5]);
+        Ok(())
+    }
+
+    #[test]
     fn drw_operation_height_1() -> Result<(), CpuError> {
         let mut cpu = Cpu::default();
 

@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn open() -> Result<(), &'static str> {
         let mut rom = Rom::default();
-        rom.open_file(Path::new("./IBM Logo.ch8"));
+        rom.open_file(Path::new("./roms/test/IBM Logo.ch8"));
         rom.get_instructions()?;
         rom.print_instructions();
         assert_eq!(1, 1);
