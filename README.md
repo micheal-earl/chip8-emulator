@@ -1,6 +1,6 @@
 # chip8-emulator
 
-Simple CHIP-8 CPU emulator. Can currently run the IBM Logo rom and the test opcode rom.
+Simple CHIP-8 CPU emulator.
 
 ## Install and run
 
