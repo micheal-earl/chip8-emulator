@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 minifb = "0.28.0"
+tinyaudio = "1.1.0"

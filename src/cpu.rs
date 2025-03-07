@@ -923,6 +923,11 @@ impl Cpu {
         Ok(())
     }
 
+    /// Returns a reference to the current value of the sound timer
+    pub fn read_sound(&self) -> &u8 {
+        &self.sound
+    }
+
     /// Grabs a rom and dumps the `OpCode`s from it into memory
     pub fn load_rom(&mut self, rom: Rom) -> Result<(), Error> {
         self.program_counter = 0x200;

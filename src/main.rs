@@ -9,6 +9,11 @@ use rom::Rom;
 use std::env;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use tinyaudio::prelude::*;
+
+const FRAME_RATE: usize = 60;
+const VOLUME_ON: f32 = 0.03;
+const VOLUME_OFF: f32 = 0.00;
 
 fn display_buffer_to_rgb(buffer: &[u8]) -> Vec<u32> {
     let mut pixels = Vec::with_capacity(WIDTH * HEIGHT);
@@ -56,7 +61,40 @@ fn update_cpu_keyboard(cpu: &mut Cpu, window: &Window) {
     }
 }
 
+// TODO Fix scuffed audio setup, idk what I'm doing
+fn prepare_audio(volume: Arc<Mutex<f32>>) -> Result<OutputDevice, Error> {
+    let params = OutputDeviceParameters {
+        channels_count: 2,
+        sample_rate: 44100,
+        channel_sample_count: 4410,
+    };
+
+    let device = run_output_device(params, {
+        let vol_clone = Arc::clone(&volume);
+        let mut clock = 0f32;
+        move |data| {
+            let vol = *vol_clone.lock().unwrap();
+            for samples in data.chunks_mut(params.channels_count) {
+                clock = (clock + 1.0) % params.sample_rate as f32;
+                let value =
+                    (clock * 440.0 * 2.0 * std::f32::consts::PI / params.sample_rate as f32).sin();
+                for sample in samples {
+                    *sample = value * vol;
+                }
+            }
+        }
+    })
+    .map_err(|e| Error::Audio(format!("Audio error: {}", e)))?;
+
+    Ok(device)
+}
+
 fn main() -> Result<(), Error> {
+    let volume_for_audio = Arc::new(Mutex::new(0.0f32));
+
+    // Keep device in scope so the audio thread keeps running
+    let _audio_device = prepare_audio(Arc::clone(&volume_for_audio))?;
+
     let args: Vec<String> = env::args().collect();
 
     // Wrap CPU in an Arc<Mutex<>> to share it between threads
@@ -95,13 +133,22 @@ fn main() -> Result<(), Error> {
     .expect("Unable to open the window");
 
     // Limit to max ~60 fps update rate.
-    window.set_target_fps(60);
+    window.set_target_fps(FRAME_RATE);
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         {
+            // Lock the volume variable to update it
+            let mut vol = volume_for_audio.lock().unwrap();
+            // If any key is pressed, set volume to 0.03; otherwise, mute (0.0)
+
             // Lock the CPU and update its keyboard state
             let mut cpu_lock = cpu.lock()?;
             update_cpu_keyboard(&mut cpu_lock, &window);
+            *vol = if cpu_lock.read_sound().clone() > 0 {
+                VOLUME_ON
+            } else {
+                VOLUME_OFF
+            };
         }
         // Fetch the display buffer from the CPU.
         let display_buffer = {

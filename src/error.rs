@@ -17,6 +17,8 @@ pub enum Error {
     Poison(String),
     /// Errors from the minifb graphics library
     Minifb(MinifbError),
+    /// Errors from tinyaudio
+    Audio(String),
 }
 
 impl fmt::Display for Error {
@@ -26,6 +28,7 @@ impl fmt::Display for Error {
             Error::Cpu(msg) => write!(f, "CPU Error: {}", msg),
             Error::Poison(msg) => write!(f, "Mutex Poison Error: {}", msg),
             Error::Minifb(e) => write!(f, "Minifb Error: {}", e),
+            Error::Audio(msg) => write!(f, "Audio Error: {}", msg),
         }
     }
 }
