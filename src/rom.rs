@@ -1,3 +1,5 @@
+use crate::error::Error;
+
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
@@ -28,15 +30,16 @@ impl Rom {
         self.buffer = Some(BufReader::new(File::open(file).unwrap()));
     }
 
-    pub fn get_instructions(&mut self) -> Result<(), &'static str> {
+    pub fn get_instructions(&mut self) -> Result<(), Error> {
         if let Some(ref mut buffer) = self.buffer {
             for byte_or_error in buffer.bytes() {
-                let byte = byte_or_error.map_err(|_| "Error reading byte")?;
+                let byte =
+                    byte_or_error.map_err(|_| Error::Cpu("Error reading byte".to_string()))?;
                 self.instructions.push(byte);
             }
             Ok(())
         } else {
-            Err("No buffer found")
+            Err(Error::Cpu("No buffer found".to_string()))
         }
     }
 
@@ -53,7 +56,7 @@ mod tests {
 
     // TODO Fix this test
     #[test]
-    fn open() -> Result<(), &'static str> {
+    fn open() -> Result<(), Error> {
         let mut rom = Rom::default();
         rom.open_file(Path::new("./roms/test/IBM Logo.ch8"));
         rom.get_instructions()?;

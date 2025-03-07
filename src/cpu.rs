@@ -1,3 +1,4 @@
+use crate::error::Error;
 use std::thread;
 use std::time;
 
@@ -20,10 +21,6 @@ type Address = u16;
 
 /// The Display is a memory region storing bits for the CHIP-8 pixel buffer.
 type Display = [Register; 256];
-
-// TODO Replace with proper error
-/// Placeholder type for errors
-pub type CpuError = &'static str;
 
 /// The CHIP-8 describes the 16 u8 registers using Vx where x is the register index.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -48,7 +45,7 @@ pub enum RegisterLabel {
 }
 
 impl TryFrom<u8> for RegisterLabel {
-    type Error = CpuError;
+    type Error = Error;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
@@ -68,7 +65,7 @@ impl TryFrom<u8> for RegisterLabel {
             13 => Ok(RegisterLabel::VD),
             14 => Ok(RegisterLabel::VE),
             15 => Ok(RegisterLabel::VF),
-            _ => Err("Invalid register value"),
+            _ => Err(Error::Cpu("Invalid register label accessed".to_string())),
         }
     }
 }
@@ -214,7 +211,7 @@ impl Cpu {
         (c, x, y, d, kk, nnn)
     }
 
-    fn execute(&mut self, decoded: Instruction) -> Result<(), CpuError> {
+    fn execute(&mut self, decoded: Instruction) -> Result<(), Error> {
         let (c, x, y, d, kk, nnn) = decoded;
         let vx = RegisterLabel::try_from(x)?;
         let vy = RegisterLabel::try_from(y)?;
@@ -242,7 +239,11 @@ impl Cpu {
                 0x6 => self.shr(vx),
                 0x7 => self.subn_xy(vx, vy),
                 0xE => self.shl(vx),
-                _ => return Err("0x8 instruction with unknown d value"),
+                _ => {
+                    return Err(Error::Cpu(
+                        "0x8 instruction with unknown d value".to_string(),
+                    ))
+                }
             },
             (0x9, _, _, 0x0) => self.sne_xy(vx, vy), // 9xy0 Skip next instruction if Vx != Vy
             (0xA, _, _, _) => self.ldi(nnn),
@@ -261,14 +262,14 @@ impl Cpu {
             (0xF, _, 0x3, 0x3) => self.ld_bcd(vx),
             (0xF, _, 0x5, 0x5) => self.ld_from_registers(vx),
             (0xF, _, 0x6, 0x5) => self.ld_to_registers(vx),
-            _ => return Err("Unknown instruction"),
+            _ => return Err(Error::Cpu("Unknown instruction".to_string())),
         }
 
         Ok(())
     }
 
     /// Runs the cpu, stepping through instructions until end of memory
-    pub fn run(&mut self) -> Result<(), CpuError> {
+    pub fn run(&mut self) -> Result<(), Error> {
         let cycle_interval = DURATION_700HZ_IN_MICROS;
         let sound_and_delay_interval = DURATION_60HZ_IN_MICROS;
         let mut last_sd_update = time::Instant::now();
@@ -306,7 +307,7 @@ impl Cpu {
     }
 
     /// Steps the cpu forward one instruction
-    pub fn step(&mut self) -> Result<bool, CpuError> {
+    pub fn step(&mut self) -> Result<bool, Error> {
         if self.program_counter >= 4095 {
             return Ok(false); // or return false if you want to exit
         }
@@ -495,7 +496,7 @@ impl Cpu {
     /// If the sprite is partially off-screen, it is clipped (pixels outside are not drawn)  
     /// If the sprite is completely off-screen, it wraps around  
     /// VF is set to 1 if any drawn pixel is erased  
-    fn drw(&mut self, vx: RegisterLabel, vy: RegisterLabel, d: u8) -> Result<(), CpuError> {
+    fn drw(&mut self, vx: RegisterLabel, vy: RegisterLabel, d: u8) -> Result<(), Error> {
         // Get the original coordinates from registers.
         let orig_x = self.read_register(vx)? as usize;
         let orig_y = self.read_register(vy)? as usize;
@@ -680,7 +681,7 @@ impl Cpu {
         (self.display[byte_index] >> bit_index) & 1
     }
 
-    pub fn write_display(&mut self, pixel_index: u16, value: bool) -> Result<(), CpuError> {
+    pub fn write_display(&mut self, pixel_index: u16, value: bool) -> Result<(), Error> {
         // Calculate which byte holds the pixel.
         let byte_index = (pixel_index / 8) as usize;
         // Calculate the bit position within that byte.
@@ -689,7 +690,9 @@ impl Cpu {
 
         // Check if the byte index is valid for our display buffer.
         if byte_index >= self.display.len() {
-            return Err("Byte index out of bounds of display buffer.");
+            return Err(Error::Cpu(
+                "Byte index out of bounds of display buffer.".to_string(),
+            ));
         }
 
         if value {
@@ -714,11 +717,11 @@ impl Cpu {
     }
 
     /// Returns a copy of the value stored in the provided register
-    pub fn read_register(&self, register_label: RegisterLabel) -> Result<Register, CpuError> {
+    pub fn read_register(&self, register_label: RegisterLabel) -> Result<Register, Error> {
         if let Some(value) = self.registers.get(register_label as usize).copied() {
             Ok(value)
         } else {
-            Err("Out of bounds")
+            Err(Error::Cpu("Out of bounds".to_string()))
         }
     }
 
@@ -727,7 +730,7 @@ impl Cpu {
         &mut self,
         register_label: RegisterLabel,
         value: u8,
-    ) -> Result<(), CpuError> {
+    ) -> Result<(), Error> {
         let register_label_as_usize = register_label as usize;
         let register_is_in_bounds = register_label_as_usize < self.registers.len();
 
@@ -735,27 +738,27 @@ impl Cpu {
             self.registers[register_label_as_usize] = value;
             Ok(())
         } else {
-            Err("Register index out of bounds")
+            Err(Error::Cpu("Register index out of bounds".to_string()))
         }
     }
 
     /// Returns a copy of the value stored in the provided memory address
-    pub fn read_memory(&self, address: Address) -> Result<Register, CpuError> {
+    pub fn read_memory(&self, address: Address) -> Result<Register, Error> {
         if let Some(value) = self.memory.get(address as usize).copied() {
             Ok(value)
         } else {
-            Err("Out of bounds")
+            Err(Error::Cpu("Out of bounds".to_string()))
         }
     }
 
     /// Write a new value to a memory location
-    pub fn write_memory(&mut self, address: Address, value: u8) -> Result<(), CpuError> {
+    pub fn write_memory(&mut self, address: Address, value: u8) -> Result<(), Error> {
         let index = address as usize;
         if index < self.memory.len() {
             self.memory[index] = value;
             Ok(())
         } else {
-            Err("Memory address out of bounds")
+            Err(Error::Cpu("Memory address out of bounds".to_string()))
         }
     }
 
@@ -763,7 +766,7 @@ impl Cpu {
     pub fn write_memory_batch(
         &mut self,
         addresses_and_values: &[(Address, u8)],
-    ) -> Result<(), CpuError> {
+    ) -> Result<(), Error> {
         for &(address, value) in addresses_and_values {
             self.write_memory(address, value)?;
         }
@@ -771,15 +774,16 @@ impl Cpu {
     }
 
     /// Write an opcode to memory. Opcodes are 2 registers long
-    pub fn write_opcode(&mut self, address: Address, opcode: OpCode) -> Result<(), CpuError> {
+    pub fn write_opcode(&mut self, address: Address, opcode: OpCode) -> Result<(), Error> {
         let index = address as usize;
         if index % 2 != 0 {
-            return Err(
-                "Cannot insert opcode at odd memory address. Opcodes are 2 registers long.",
-            );
+            return Err(Error::Cpu(
+                "Cannot insert opcode at odd memory address. Opcodes are 2 registers long."
+                    .to_string(),
+            ));
         }
         if index + 1 >= self.memory.len() {
-            return Err("Memory address out of bounds");
+            return Err(Error::Cpu("Memory address out of bounds".to_string()));
         }
         // Split the instruction into high and low bytes.
         self.memory[index] = (opcode >> 8) as u8;
@@ -787,7 +791,7 @@ impl Cpu {
         Ok(())
     }
 
-    pub fn write_opcode_batch(&mut self, opcodes: &[(Address, OpCode)]) -> Result<(), CpuError> {
+    pub fn write_opcode_batch(&mut self, opcodes: &[(Address, OpCode)]) -> Result<(), Error> {
         for &(address, opcode) in opcodes {
             self.write_opcode(address, opcode)?;
         }
@@ -824,7 +828,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn add_xy_operation() -> Result<(), CpuError> {
+    fn add_xy_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
 
         // Write initial register values
@@ -851,7 +855,7 @@ mod tests {
     }
 
     #[test]
-    fn add_operation() -> Result<(), CpuError> {
+    fn add_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
 
         // Set an initial value in register V1
@@ -873,7 +877,7 @@ mod tests {
     }
 
     #[test]
-    fn jump_operation() -> Result<(), CpuError> {
+    fn jump_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
 
         cpu.write_register(RegisterLabel::V0, 5)?;
@@ -895,7 +899,7 @@ mod tests {
     }
 
     #[test]
-    fn call_and_ret_operations() -> Result<(), CpuError> {
+    fn call_and_ret_operations() -> Result<(), Error> {
         let mut cpu = Cpu::default();
 
         // Write initial register values
@@ -922,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_operation() -> Result<(), CpuError> {
+    fn ld_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
 
         let opcodes = [
@@ -940,7 +944,7 @@ mod tests {
     }
 
     #[test]
-    fn ldi_operation() -> Result<(), CpuError> {
+    fn ldi_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
 
         let opcodes = [
@@ -958,7 +962,7 @@ mod tests {
     }
 
     #[test]
-    fn se_operation() -> Result<(), CpuError> {
+    fn se_operation() -> Result<(), Error> {
         // Test 3xkk: Skip next instruction if Vx equals kk
         let mut cpu = Cpu::default();
         cpu.write_register(RegisterLabel::V0, 10)?;
@@ -976,7 +980,7 @@ mod tests {
     }
 
     #[test]
-    fn sne_operation() -> Result<(), CpuError> {
+    fn sne_operation() -> Result<(), Error> {
         // Test 4xkk: Skip next instruction if Vx does NOT equal kk
         let mut cpu = Cpu::default();
         cpu.write_register(RegisterLabel::V0, 10)?;
@@ -994,7 +998,7 @@ mod tests {
     }
 
     #[test]
-    fn se_xy_operation() -> Result<(), CpuError> {
+    fn se_xy_operation() -> Result<(), Error> {
         // Test 5xy0: Skip next instruction if Vx equals Vy
         let mut cpu = Cpu::default();
         cpu.write_register(RegisterLabel::V0, 20)?;
@@ -1013,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn sne_xy_operation() -> Result<(), CpuError> {
+    fn sne_xy_operation() -> Result<(), Error> {
         // Test 9xy0: Skip next instruction if Vx does NOT equal Vy
         let mut cpu = Cpu::default();
         cpu.write_register(RegisterLabel::V0, 15)?;
@@ -1032,7 +1036,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_vx_into_vy_operation() -> Result<(), CpuError> {
+    fn ld_vx_into_vy_operation() -> Result<(), Error> {
         // Test 8xy0: Set Vx = Vy
         let mut cpu = Cpu::default();
         cpu.write_register(RegisterLabel::V1, 42)?;
@@ -1047,7 +1051,7 @@ mod tests {
     }
 
     #[test]
-    fn or_xy_operation() -> Result<(), CpuError> {
+    fn or_xy_operation() -> Result<(), Error> {
         // Test 8xy1: Set Vx = Vx OR Vy
         let mut cpu = Cpu::default();
         cpu.write_register(RegisterLabel::V0, 0xA)?; // 0b1010
@@ -1064,7 +1068,7 @@ mod tests {
     }
 
     #[test]
-    fn and_xy_operation() -> Result<(), CpuError> {
+    fn and_xy_operation() -> Result<(), Error> {
         // Test 8xy2: Set Vx = Vx AND Vy
         let mut cpu = Cpu::default();
         cpu.write_register(RegisterLabel::V0, 0xA)?; // 0b1010
@@ -1081,7 +1085,7 @@ mod tests {
     }
 
     #[test]
-    fn xor_xy_operation() -> Result<(), CpuError> {
+    fn xor_xy_operation() -> Result<(), Error> {
         // Test 8xy3: Set Vx = Vx XOR Vy
         let mut cpu = Cpu::default();
         cpu.write_register(RegisterLabel::V0, 0xA)?; // 0b1010
@@ -1098,7 +1102,7 @@ mod tests {
     }
 
     #[test]
-    fn sub_xy_operation() -> Result<(), CpuError> {
+    fn sub_xy_operation() -> Result<(), Error> {
         // Test case where Vx > Vy
         {
             let mut cpu = Cpu::default();
@@ -1134,7 +1138,7 @@ mod tests {
     }
 
     #[test]
-    fn cls_operation() -> Result<(), CpuError> {
+    fn cls_operation() -> Result<(), Error> {
         // Test 00E0: Clear the display
         let mut cpu = Cpu::default();
         // Fill the display with nonzero data
@@ -1155,7 +1159,7 @@ mod tests {
     }
 
     #[test]
-    fn subn_xy_operation_no_borrow() -> Result<(), CpuError> {
+    fn subn_xy_operation_no_borrow() -> Result<(), Error> {
         // Test 8xy7 SUBN: if Vy > Vx then VF is set to 1 and Vx becomes Vy - Vx
         let mut cpu = Cpu::default();
         // Set V0 to 5 and V1 to 10
@@ -1174,7 +1178,7 @@ mod tests {
     }
 
     #[test]
-    fn subn_xy_operation_with_borrow() -> Result<(), CpuError> {
+    fn subn_xy_operation_with_borrow() -> Result<(), Error> {
         // Test 8xy7 SUBN: if Vy <= Vx then VF is set to 0 and Vx becomes Vy - Vx (with wrapping)
         let mut cpu = Cpu::default();
         // Set V0 to 10 and V1 to 5
@@ -1193,7 +1197,7 @@ mod tests {
     }
 
     #[test]
-    fn shl_operation() -> Result<(), CpuError> {
+    fn shl_operation() -> Result<(), Error> {
         // Test case 1: Use V0 with MSB set
         // Program:
         // 6090: LD V0, 0x90    (set V0 = 0x90)
@@ -1235,7 +1239,7 @@ mod tests {
     }
 
     #[test]
-    fn shr_operation() -> Result<(), CpuError> {
+    fn shr_operation() -> Result<(), Error> {
         // Test case 1: Use V0 where LSB is 1
         // Program:
         // 6005: LD V0, 0x05    (set V0 = 5; binary 0101)
@@ -1277,7 +1281,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_from_registers_operation() -> Result<(), CpuError> {
+    fn ld_from_registers_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
 
         // Program:
@@ -1317,7 +1321,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_to_registers_operation() -> Result<(), CpuError> {
+    fn ld_to_registers_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
 
         // Preload memory values at address 150 with known data
@@ -1353,7 +1357,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_bcd_operation() -> Result<(), CpuError> {
+    fn ld_bcd_operation() -> Result<(), Error> {
         // Test Fx33 for register V1 with value 123
         // 0x200: 0x617B -> LD V1, 0x7B (set V1 to 123)
         // 0x202: 0xA12C -> LDI 0x12C (set I to 300 decimal)
@@ -1425,7 +1429,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rnd_opcode() -> Result<(), CpuError> {
+    fn test_rnd_opcode() -> Result<(), Error> {
         // create a CPU instance
         let mut cpu = Cpu::default();
         // set a known RNG seed so the output is predictable
@@ -1446,7 +1450,7 @@ mod tests {
     }
 
     #[test]
-    fn jmp_x_operation() -> Result<(), CpuError> {
+    fn jmp_x_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
         // LD V0, 5
         cpu.write_opcode_batch(&[(0x0200, 0x6005)])?;
@@ -1460,7 +1464,7 @@ mod tests {
     }
 
     #[test]
-    fn skp_operation() -> Result<(), CpuError> {
+    fn skp_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
         // LD V1, 3 so that V1 holds the key index to check
         cpu.write_opcode_batch(&[(0x0200, 0x6103)])?;
@@ -1478,7 +1482,7 @@ mod tests {
     }
 
     #[test]
-    fn sknp_operation() -> Result<(), CpuError> {
+    fn sknp_operation() -> Result<(), Error> {
         // Scenario 1: Key not pressed so the next instruction is skipped
         {
             let mut cpu = Cpu::default();
@@ -1513,7 +1517,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_from_delay_operation() -> Result<(), CpuError> {
+    fn ld_from_delay_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
         // Manually set delay timer to 77
         cpu.delay = 77;
@@ -1525,7 +1529,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_from_key_operation() -> Result<(), CpuError> {
+    fn ld_from_key_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
         // Set keyboard: simulate key 7 being pressed
         cpu.keyboard[7] = true;
@@ -1537,7 +1541,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_to_delay_operation() -> Result<(), CpuError> {
+    fn ld_to_delay_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
         // LD V1, 0x21 to load 33 into V1
         cpu.write_opcode_batch(&[(0x0200, 0x6121)])?;
@@ -1549,7 +1553,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_to_sound_operation() -> Result<(), CpuError> {
+    fn ld_to_sound_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
         // LD V3, 0x2C to load 44 into V3
         cpu.write_opcode_batch(&[(0x0200, 0x632C)])?;
@@ -1561,7 +1565,7 @@ mod tests {
     }
 
     #[test]
-    fn add_i_operation() -> Result<(), CpuError> {
+    fn add_i_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
         // LD V0, 0x0A to load 10 into V0
         cpu.write_opcode_batch(&[(0x0200, 0x600A)])?;
@@ -1573,7 +1577,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_i_operation() -> Result<(), CpuError> {
+    fn ld_i_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
         // LD V1, 7 to load 7 into V1
         cpu.write_opcode_batch(&[(0x0200, 0x6107)])?;
@@ -1585,7 +1589,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_keyboard_operation() -> Result<(), CpuError> {
+    fn reset_keyboard_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
         // Set some keys to true
         cpu.keyboard[2] = true;
@@ -1599,7 +1603,7 @@ mod tests {
     }
 
     #[test]
-    fn key_down_operation() -> Result<(), CpuError> {
+    fn key_down_operation() -> Result<(), Error> {
         let mut cpu = Cpu::default();
         // Simulate key 5 being pressed
         cpu.key_down(5);
@@ -1608,7 +1612,7 @@ mod tests {
     }
 
     #[test]
-    fn drw_operation_height_1() -> Result<(), CpuError> {
+    fn drw_operation_height_1() -> Result<(), Error> {
         let mut cpu = Cpu::default();
 
         // Program:
@@ -1669,7 +1673,7 @@ mod tests {
     }
 
     #[test]
-    fn drw_operation_height_3() -> Result<(), CpuError> {
+    fn drw_operation_height_3() -> Result<(), Error> {
         let mut cpu = Cpu::default();
 
         // Program:
@@ -1730,7 +1734,7 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn drw_operation_edge_clipping() -> Result<(), CpuError> {
+    fn drw_operation_edge_clipping() -> Result<(), Error> {
         let mut cpu = Cpu::default();
 
         // Program:
@@ -1776,7 +1780,7 @@ mod tests {
     }
 
     #[test]
-    fn drw_operation_wrapping() -> Result<(), CpuError> {
+    fn drw_operation_wrapping() -> Result<(), Error> {
         let mut cpu = Cpu::default();
 
         // Program:

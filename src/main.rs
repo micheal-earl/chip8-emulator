@@ -1,7 +1,9 @@
-pub mod cpu;
-pub mod rom;
+mod cpu;
+pub mod error;
+mod rom;
 
-use cpu::{Cpu, CpuError, DURATION_60HZ_IN_MICROS, DURATION_700HZ_IN_MICROS, HEIGHT, WIDTH};
+use cpu::{Cpu, DURATION_60HZ_IN_MICROS, DURATION_700HZ_IN_MICROS, HEIGHT, WIDTH};
+use error::Error;
 use minifb::{Key, Scale, ScaleMode, Window, WindowOptions};
 use std::env;
 use std::path::Path;
@@ -68,7 +70,7 @@ fn update_cpu_keyboard(cpu: &mut Cpu, window: &Window) {
     }
 }
 
-fn main() -> Result<(), &'static str> {
+fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
 
     // Wrap CPU in an Arc<Mutex<>> to share it between threads
@@ -84,14 +86,14 @@ fn main() -> Result<(), &'static str> {
         rom.get_instructions()?;
 
         // Write the ROM bytes into CPU memory starting at 0x200.
-        let mut cpu_lock = cpu.lock().unwrap();
+        let mut cpu_lock = cpu.lock()?;
         let start_address = 0x200;
         for (i, &byte) in rom.instructions.iter().enumerate() {
             cpu_lock.write_memory((start_address + i) as u16, byte)?;
         }
     } else {
         // TODO Change behavior on no arg or mangled arg
-        let mut cpu_lock = cpu.lock().unwrap();
+        let mut cpu_lock = cpu.lock()?;
 
         // Load a program that draws a shape with height 3:
         // 1. U shape at (10,10):
@@ -117,7 +119,7 @@ fn main() -> Result<(), &'static str> {
     // TODO There is repeat code here that appears in cpu.run()
     // Find a way to reduce repeated code
     let cpu_clone = Arc::clone(&cpu);
-    thread::spawn(move || -> Result<(), CpuError> {
+    thread::spawn(move || -> Result<(), Error> {
         use std::thread::sleep;
         use std::time;
 
@@ -129,7 +131,7 @@ fn main() -> Result<(), &'static str> {
         loop {
             {
                 // Lock the CPU for just one instruction
-                let mut cpu = cpu_clone.lock().unwrap();
+                let mut cpu = cpu_clone.lock()?;
                 // If step() returns false, exit the loop
                 if !cpu.step()? {
                     break;
@@ -183,21 +185,19 @@ fn main() -> Result<(), &'static str> {
     while window.is_open() && !window.is_key_down(Key::Escape) {
         {
             // Lock the CPU and update its keyboard state
-            let mut cpu_lock = cpu.lock().unwrap();
+            let mut cpu_lock = cpu.lock()?;
             update_cpu_keyboard(&mut cpu_lock, &window);
         }
         // Fetch the display buffer from the CPU.
         let display_buffer = {
-            let cpu_lock = cpu.lock().unwrap();
+            let cpu_lock = cpu.lock()?;
             // TODO maybe slow to clone? idk
             cpu_lock.read_display().clone()
         };
         let window_buffer = display_buffer_to_rgb(&display_buffer);
 
         // Update the window with the current display buffer.
-        window
-            .update_with_buffer(&window_buffer, WIDTH, HEIGHT)
-            .unwrap();
+        window.update_with_buffer(&window_buffer, WIDTH, HEIGHT)?;
     }
 
     Ok(())
