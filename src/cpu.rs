@@ -7,6 +7,7 @@ use std::time;
 
 // TODO Scrap most of the public API, tests can access props directly and it won't matter
 // TODO Double check that properties that should be private actually are private
+// TODO Use format!() macro for error outputs?
 
 /// An OpCode is 16 bits (2 bytes). These bits determine what the cpu executes
 type OpCode = u16;

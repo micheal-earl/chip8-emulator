@@ -22,7 +22,7 @@ impl Rom {
         let mut opcodes = Vec::new();
         buf_reader
             .read_to_end(&mut opcodes)
-            .map_err(|e| Error::Cpu(format!("Error reading ROM file: {}", e)))?;
+            .map_err(|e| Error::Io(e))?;
         Ok(Rom { opcodes })
     }
 }
