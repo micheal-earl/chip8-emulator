@@ -6,6 +6,7 @@ use std::thread;
 use std::time;
 
 // TODO Scrap most of the public API, tests can access props directly and it won't matter
+// TODO Double check that properties that should be private actually are private
 
 /// An OpCode is 16 bits (2 bytes). These bits determine what the cpu executes
 type OpCode = u16;
@@ -34,8 +35,6 @@ pub struct Instruction {
     pub integer_kk: u8,   // kk
     pub addr: Address,    // nnn
 }
-
-// TODO Redo custom types/aliases
 
 /// A VRegister is a memory location containing 8 bits
 type VRegister = u8;
@@ -121,10 +120,10 @@ const FONT_DATA: [u8; 80] = [
 ];
 
 /// The interval of one Cpu cycle is 700hz
-pub const CYCLE_INTERVAL: time::Duration = time::Duration::from_micros(1_000_000 / 700);
+const CYCLE_INTERVAL: time::Duration = time::Duration::from_micros(1_000_000 / 700);
 
 /// The interval of one sound and delay timer is 60hz
-pub const SD_INTERVAL: time::Duration = time::Duration::from_micros(1_000_000 / 60);
+const SD_INTERVAL: time::Duration = time::Duration::from_micros(1_000_000 / 60);
 
 /// Represents the CHIP-8 display buffer containing 2048 pixels stored as 256 bytes
 pub struct DisplayBuffer {
@@ -378,6 +377,8 @@ impl Cpu {
 
         Ok(())
     }
+
+    // TODO Fix code duplication between run_serial and run_concurrent
 
     /// Runs the CPU in a sequential loop for headless operation, useful for unit tests
     pub fn run_serial(&mut self) -> Result<(), Error> {
