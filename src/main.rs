@@ -65,7 +65,7 @@ fn main() -> Result<(), Error> {
     while window.is_open() && !window.is_key_down(Key::Escape) {
         {
             // Lock the volume variable to update it
-            let mut vol = volume_for_audio.lock().unwrap();
+            let mut vol = volume_for_audio.lock()?;
             // If any key is pressed, set volume to 0.03; otherwise, mute (0.0)
 
             // Lock the CPU and update its keyboard state
@@ -77,12 +77,14 @@ fn main() -> Result<(), Error> {
                 VOLUME_OFF
             };
         }
+
         // Fetch the display buffer from the CPU.
         let display_buffer = {
             let cpu_lock = cpu.lock()?;
             // TODO maybe slow to clone? idk
             cpu_lock.display.as_slice().clone()
         };
+
         let window_buffer = display_buffer_to_rgb(&display_buffer);
 
         // Update the window with the current display buffer.

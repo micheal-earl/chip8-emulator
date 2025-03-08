@@ -241,8 +241,6 @@ pub struct Cpu {
     program_counter: usize,
     delay: VRegister,
     sound: VRegister,
-    sd_interval: time::Duration,
-    cycle_interval: time::Duration,
     rng: u8,
     lock: bool,
 }
@@ -268,8 +266,6 @@ impl Default for Cpu {
             program_counter: 0x0200,
             delay: 0,
             sound: 0,
-            sd_interval: SD_INTERVAL,
-            cycle_interval: CYCLE_INTERVAL,
             rng: seed,
             lock: false,
         };
@@ -371,95 +367,50 @@ impl Cpu {
         Ok(())
     }
 
-    // TODO Fix code duplication between run_serial and run_concurrent
-
     /// Runs the CPU in a sequential loop for headless operation, useful for unit tests
     #[allow(dead_code)]
-    pub fn run_serial(&mut self) -> Result<(), Error> {
+    fn run_serial(&mut self) -> Result<(), Error> {
         let mut last_sd_update = time::Instant::now();
-        let mut next_cycle_start = time::Instant::now() + self.cycle_interval;
+        let mut next_cycle_start = time::Instant::now() + CYCLE_INTERVAL;
 
         loop {
+            // Do one cycle
             if !self.step()? {
                 break;
             }
 
-            // Update timers if 1/60 sec has elapsed
-            let now = time::Instant::now();
-            if now.duration_since(last_sd_update) >= self.sd_interval {
-                if self.delay > 0 {
-                    self.delay -= 1;
-                }
-                if self.sound > 0 {
-                    self.sound -= 1;
-                    // Optionally trigger a beep here if sound > 0
-                }
-                last_sd_update = now;
-            }
-
-            // Sleep until the next cycle
-            let now = time::Instant::now();
-            if now < next_cycle_start {
-                thread::sleep(next_cycle_start - now);
-            }
-
-            next_cycle_start += self.cycle_interval;
+            self.decrement_timers(&mut last_sd_update);
+            Self::wait_for_next_cycle(&mut next_cycle_start);
         }
 
         Ok(())
     }
 
-    /// Spawns a separate thread to run the CPU loop concurrently, handling cycle timing and timer
-    /// updates
+    /// Spawns a separate thread to run the `Cpu` loop concurrently
     pub fn run_concurrent(cpu: Arc<Mutex<Self>>) -> thread::JoinHandle<Result<(), Error>> {
-        // All cycle information is defined here.
-        // Lock the CPU briefly to extract the interval properties.
-        let (cycle_interval, sd_interval) = {
-            let cpu_ref = cpu.lock().expect("Failed to lock CPU");
-            (cpu_ref.cycle_interval, cpu_ref.sd_interval)
-        };
-
         thread::spawn(move || {
             let mut last_sd_update = time::Instant::now();
-            let mut next_cycle_start: time::Instant = time::Instant::now() + cycle_interval;
+            let mut next_cycle_start = time::Instant::now() + CYCLE_INTERVAL;
 
             loop {
+                // Lock *only* while stepping & updating timers
                 {
-                    // Lock the CPU only for this cycle
                     let mut cpu_lock = cpu.lock()?;
-
-                    // Execute one instruction; if step returns false, exit
                     if !cpu_lock.step()? {
                         break;
                     }
-
-                    // Update timers if the timer_interval has elapsed
-                    let now = time::Instant::now();
-                    if now.duration_since(last_sd_update) >= sd_interval {
-                        if cpu_lock.delay > 0 {
-                            cpu_lock.delay -= 1;
-                        }
-                        if cpu_lock.sound > 0 {
-                            cpu_lock.sound -= 1;
-                        }
-                        last_sd_update = now;
-                    }
-                } // CPU lock is released here
-
-                // Sleep until the next cycle
-                let now = time::Instant::now();
-                if now < next_cycle_start {
-                    thread::sleep(next_cycle_start - now);
+                    cpu_lock.decrement_timers(&mut last_sd_update);
                 }
 
-                next_cycle_start += cycle_interval;
+                Self::wait_for_next_cycle(&mut next_cycle_start);
             }
+
             Ok(())
         })
     }
 
     /// Executes one CPU instruction and returns false if the program counter exceeds memory bounds
-    pub fn step(&mut self) -> Result<bool, Error> {
+    fn step(&mut self) -> Result<bool, Error> {
         if self.program_counter >= 4095 {
             return Ok(false);
         }
@@ -469,6 +420,30 @@ impl Cpu {
         self.execute(instruction)?;
 
         Ok(true)
+    }
+
+    /// Decrement the sound and delay timers based on the last time they were changed
+    fn decrement_timers(&mut self, last_sd_update: &mut time::Instant) {
+        // Check/update timers:
+        let now = time::Instant::now();
+        if now.duration_since(*last_sd_update) >= SD_INTERVAL {
+            if self.delay > 0 {
+                self.delay -= 1;
+            }
+            if self.sound > 0 {
+                self.sound -= 1;
+            }
+            *last_sd_update = now;
+        }
+    }
+
+    /// Wait for the next cycle of the `Cpu` to achieve desired clock rate
+    fn wait_for_next_cycle(next_cycle_start: &mut time::Instant) {
+        let now = time::Instant::now();
+        if now < *next_cycle_start {
+            thread::sleep(*next_cycle_start - now);
+        }
+        *next_cycle_start += CYCLE_INTERVAL;
     }
 
     /// 00E0 (CLS) - Clears the display by resetting the display buffer
