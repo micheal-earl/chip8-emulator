@@ -867,7 +867,6 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::Error;
 
     /// Tests for logical operations
     mod logic {
