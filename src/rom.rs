@@ -5,7 +5,7 @@ use std::path::Path;
 
 /// Represents a loaded CHIP-8 ROM as a vector of opcodes
 pub struct Rom {
-    pub opcodes: Vec<u8>,
+    opcodes: Vec<u8>,
 }
 
 impl Rom {
@@ -24,6 +24,10 @@ impl Rom {
             .read_to_end(&mut opcodes)
             .map_err(|e| Error::Io(e))?;
         Ok(Rom { opcodes })
+    }
+
+    pub fn get_opcodes(&self) -> &Vec<u8> {
+        &self.opcodes
     }
 }
 

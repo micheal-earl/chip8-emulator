@@ -21,25 +21,25 @@ pub fn display_buffer_to_rgb(buffer: &[u8]) -> Vec<u32> {
 }
 
 pub fn update_cpu_keyboard(cpu: &mut Cpu, window: &Window) {
-    cpu.keyboard.clear();
+    cpu.get_keyboard_mut().clear();
     for key in window.get_keys() {
         match key {
-            Key::Key1 => cpu.keyboard.key_down(0x1),
-            Key::Key2 => cpu.keyboard.key_down(0x2),
-            Key::Key3 => cpu.keyboard.key_down(0x3),
-            Key::Key4 => cpu.keyboard.key_down(0xC),
-            Key::Q => cpu.keyboard.key_down(0x4),
-            Key::W => cpu.keyboard.key_down(0x5),
-            Key::E => cpu.keyboard.key_down(0x6),
-            Key::R => cpu.keyboard.key_down(0xD),
-            Key::A => cpu.keyboard.key_down(0x7),
-            Key::S => cpu.keyboard.key_down(0x8),
-            Key::D => cpu.keyboard.key_down(0x9),
-            Key::F => cpu.keyboard.key_down(0xE),
-            Key::Z => cpu.keyboard.key_down(0xA),
-            Key::X => cpu.keyboard.key_down(0x0),
-            Key::C => cpu.keyboard.key_down(0xB),
-            Key::V => cpu.keyboard.key_down(0xF),
+            Key::Key1 => cpu.get_keyboard_mut().key_down(0x1),
+            Key::Key2 => cpu.get_keyboard_mut().key_down(0x2),
+            Key::Key3 => cpu.get_keyboard_mut().key_down(0x3),
+            Key::Key4 => cpu.get_keyboard_mut().key_down(0xC),
+            Key::Q => cpu.get_keyboard_mut().key_down(0x4),
+            Key::W => cpu.get_keyboard_mut().key_down(0x5),
+            Key::E => cpu.get_keyboard_mut().key_down(0x6),
+            Key::R => cpu.get_keyboard_mut().key_down(0xD),
+            Key::A => cpu.get_keyboard_mut().key_down(0x7),
+            Key::S => cpu.get_keyboard_mut().key_down(0x8),
+            Key::D => cpu.get_keyboard_mut().key_down(0x9),
+            Key::F => cpu.get_keyboard_mut().key_down(0xE),
+            Key::Z => cpu.get_keyboard_mut().key_down(0xA),
+            Key::X => cpu.get_keyboard_mut().key_down(0x0),
+            Key::C => cpu.get_keyboard_mut().key_down(0xB),
+            Key::V => cpu.get_keyboard_mut().key_down(0xF),
             _ => {}
         }
     }

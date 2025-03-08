@@ -5,10 +5,6 @@ use std::sync::Mutex;
 use std::thread;
 use std::time;
 
-// TODO Double check that properties that should be private actually are private
-// -> cpu.display and cpu.keyboard can use getter/setters instead?
-// TODO Use format!() macro for error outputs?
-
 /// An OpCode is 16 bits (2 bytes). These bits determine what the cpu executes
 type OpCode = u16;
 
@@ -28,13 +24,13 @@ type OpCode = u16;
 /// | `d`   | 4    | Low byte, low nibble                    | Opcode subgroup |
 /// | `kk`  | 8    | Low byte, both nibbles                  | Immediate value |
 /// | `nnn` | 12   | high byte's low nibble and the low byte | Memory address  |
-pub struct Instruction {
-    pub opcode_group: u8, // c
-    pub register_x: u8,   // x
-    pub register_y: u8,   // y
-    pub opcode_minor: u8, // d
-    pub integer_kk: u8,   // kk
-    pub addr: Address,    // nnn
+struct Instruction {
+    opcode_group: u8, // c
+    register_x: u8,   // x
+    register_y: u8,   // y
+    opcode_minor: u8, // d
+    integer_kk: u8,   // kk
+    addr: Address,    // nnn
 }
 
 /// A VRegister is a memory location containing 8 bits
@@ -49,7 +45,7 @@ type Address = u16;
 /// The CHIP-8 describes the 16 u8 registers using Vx where x is the register index
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u16)]
-pub enum RegisterLabel {
+enum RegisterLabel {
     V0 = 0x0,
     V1 = 0x1,
     V2 = 0x2,
@@ -89,7 +85,10 @@ impl TryFrom<u8> for RegisterLabel {
             13 => Ok(RegisterLabel::VD),
             14 => Ok(RegisterLabel::VE),
             15 => Ok(RegisterLabel::VF),
-            _ => Err(Error::Cpu("Invalid register label accessed".to_string())),
+            _ => Err(Error::Cpu(format!(
+                "Invalid register label accessed: {}. Valid range is 0-15",
+                value
+            ))),
         }
     }
 }
@@ -151,9 +150,11 @@ impl DisplayBuffer {
         let byte_index = (pixel_index / 8) as usize;
         let bit_index = 7 - (pixel_index % 8);
         if byte_index >= self.pixels.len() {
-            return Err(crate::error::Error::Cpu(
-                "Byte index out of bounds of display buffer".to_string(),
-            ));
+            return Err(Error::Cpu(format!(
+                "Byte index {} out of bounds of display buffer (length: {})",
+                byte_index,
+                self.pixels.len()
+            )));
         }
         if value {
             self.pixels[byte_index] |= 1 << bit_index;
@@ -234,8 +235,8 @@ pub struct Cpu {
     registers: [VRegister; 16],
     memory: [VRegister; 4096],
     stack: [AddressRegister; 16],
-    pub display: DisplayBuffer,
-    pub keyboard: Keyboard,
+    display: DisplayBuffer,
+    keyboard: Keyboard,
     index: AddressRegister,
     stack_pointer: usize,
     program_counter: usize,
@@ -339,9 +340,10 @@ impl Cpu {
                 0x7 => self.subn_xy(vx, vy),
                 0xE => self.shl(vx),
                 _ => {
-                    return Err(Error::Cpu(
-                        "0x8 OpCode group with unknown subgroup".to_string(),
-                    ))
+                    return Err(Error::Cpu(format!(
+                    "0x8 OpCode group with unknown subgroup: 0x{:X} (c=0x{:X}, x=0x{:X}, y=0x{:X})",
+                    d, c, x, y
+                )))
                 }
             },
             (0x9, _, _, 0x0) => self.sne_xy(vx, vy),
@@ -349,19 +351,40 @@ impl Cpu {
             (0xB, _, _, _) => self.jmp_x(nnn),
             (0xC, _, _, _) => self.rnd(vx, kk),
             (0xD, _, _, _) => self.drw(vx, vy, d)?,
-            // TODO Use nested match statements like the 0x8 instructions?
-            (0xE, _, 0x9, 0xE) => self.skp(vx),
-            (0xE, _, 0xA, 0x1) => self.sknp(vx),
-            (0xF, _, 0x0, 0x7) => self.ld_from_delay(vx),
-            (0xF, _, 0x0, 0xA) => self.ld_from_key(vx),
-            (0xF, _, 0x1, 0x5) => self.ld_to_delay(vx),
-            (0xF, _, 0x1, 0x8) => self.ld_to_sound(vx),
-            (0xF, _, 0x1, 0xE) => self.add_i(vx),
-            (0xF, _, 0x2, 0x9) => self.ld_i(vx),
-            (0xF, _, 0x3, 0x3) => self.ld_bcd(vx),
-            (0xF, _, 0x5, 0x5) => self.ld_from_registers(vx),
-            (0xF, _, 0x6, 0x5) => self.ld_to_registers(vx),
-            _ => return Err(Error::Cpu("Unknown instruction".to_string())),
+            (0xE, _, _, _) => match (y, d) {
+                (0x9, 0xE) => self.skp(vx),
+                (0xA, 0x1) => self.sknp(vx),
+                _ => {
+                    return Err(Error::Cpu(format!(
+                        "0xE OpCode group with unknown subgroup: y=0x{:X}, d=0x{:X}",
+                        y, d
+                    )))
+                }
+            },
+            (0xF, _, _, _) => match (y, d) {
+                (0x0, 0x7) => self.ld_from_delay(vx),
+                (0x0, 0xA) => self.ld_from_key(vx),
+                (0x1, 0x5) => self.ld_to_delay(vx),
+                (0x1, 0x8) => self.ld_to_sound(vx),
+                (0x1, 0xE) => self.add_i(vx),
+                (0x2, 0x9) => self.ld_i(vx),
+                (0x3, 0x3) => self.ld_bcd(vx),
+                (0x5, 0x5) => self.ld_from_registers(vx),
+                (0x6, 0x5) => self.ld_to_registers(vx),
+                _ => {
+                    return Err(Error::Cpu(format!(
+                        "0xF OpCode group with unknown subgroup: y=0x{:X}, d=0x{:X}",
+                        y, d
+                    )))
+                }
+            },
+            _ => {
+                return Err(Error::Cpu(format!(
+                    "Unknown instruction with opcode fields: opcode_group=0x{:X}, \
+                    register_x=0x{:X}, register_y=0x{:X}, opcode_minor=0x{:X}",
+                    c, x, y, d
+                )))
+            }
         }
 
         Ok(())
@@ -637,8 +660,8 @@ impl Cpu {
     /// If the sprite is completely off-screen, it wraps around  
     fn drw(&mut self, vx: RegisterLabel, vy: RegisterLabel, d: u8) -> Result<(), Error> {
         // Get the original coordinates from registers.
-        let orig_x = self.read_register(vx)? as usize;
-        let orig_y = self.read_register(vy)? as usize;
+        let orig_x = self.registers[vx as usize] as usize;
+        let orig_y = self.registers[vy as usize] as usize;
         let height = d as usize;
 
         // Determine if the entire sprite is off-screen:
@@ -801,15 +824,6 @@ impl Cpu {
         self.memory[start..end].copy_from_slice(&FONT_DATA);
     }
 
-    /// Returns the value stored in the specified register if the index is within bounds
-    pub fn read_register(&self, register_label: RegisterLabel) -> Result<VRegister, Error> {
-        if let Some(value) = self.registers.get(register_label as usize).copied() {
-            Ok(value)
-        } else {
-            Err(Error::Cpu("Out of bounds".to_string()))
-        }
-    }
-
     /// Writes a new value to the specified memory address after verifying that the address is
     /// within bounds
     pub fn write_memory(&mut self, address: Address, value: u8) -> Result<(), Error> {
@@ -818,12 +832,16 @@ impl Cpu {
             self.memory[index] = value;
             Ok(())
         } else {
-            Err(Error::Cpu("Memory address out of bounds".to_string()))
+            Err(Error::Cpu(format!(
+                "Memory address {} out of bounds (memory size: {})",
+                address,
+                self.memory.len()
+            )))
         }
     }
 
     /// Returns a reference to the current value of the sound timer
-    pub fn read_sound(&self) -> &u8 {
+    pub fn get_sound(&self) -> &u8 {
         &self.sound
     }
 
@@ -831,11 +849,21 @@ impl Cpu {
     pub fn load_rom(&mut self, rom: Rom) -> Result<(), Error> {
         self.program_counter = 0x200;
 
-        for (i, &byte) in rom.opcodes.iter().enumerate() {
+        for (i, &byte) in rom.get_opcodes().iter().enumerate() {
             self.write_memory((self.program_counter + i) as u16, byte)?;
         }
 
         Ok(())
+    }
+
+    /// Returns a reference to the display buffer
+    pub fn get_display(&self) -> &DisplayBuffer {
+        &self.display
+    }
+
+    /// Returns a mutable reference to the keyboard
+    pub fn get_keyboard_mut(&mut self) -> &mut Keyboard {
+        &mut self.keyboard
     }
 }
 

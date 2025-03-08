@@ -17,18 +17,19 @@ const VOLUME_ON: f32 = 0.03;
 const VOLUME_OFF: f32 = 0.00;
 
 fn main() -> Result<(), Error> {
-    let volume_for_audio = Arc::new(Mutex::new(0.0f32));
+    // Wrap audio_volume in an Arc<Mutex<>> to share it between the main thread and audio thread
+    let audio_volume = Arc::new(Mutex::new(0.0f32));
 
-    // Keep device in scope so the audio thread keeps running
-    let _audio_device = prepare_audio(Arc::clone(&volume_for_audio))?;
+    // Create audio device and keep in scope so the audio thread continues running
+    let _audio_device = prepare_audio(Arc::clone(&audio_volume))?;
 
     let args: Vec<String> = env::args().collect();
 
-    // Wrap CPU in an Arc<Mutex<>> to share it between threads
+    // Wrap CPU in an Arc<Mutex<>> to share it between the main thread and CPU thread
     let cpu = Arc::new(Mutex::new(Cpu::default()));
     let rom: Rom;
 
-    // Load the specified rom from the first argu or load the fallback rom if no arg
+    // Load the specified rom from the first arg or load the fallback rom if no arg
     if args.len() > 1 {
         rom = rom::Rom::from_path(Path::new(&args[1]))?;
     } else {
@@ -41,13 +42,13 @@ fn main() -> Result<(), Error> {
         cpu_lock.load_rom(rom)?;
     }
 
-    // Spawn a separate thread to run the CPU.
+    // Spawn a separate thread to run the CPU
     let cpu_clone = Arc::clone(&cpu);
     Cpu::run_concurrent(cpu_clone);
 
-    // Set up the minifb window.
+    // Set up the minifb window
     let mut window = Window::new(
-        "CHIP-8",
+        "CHIP-8 Emu",
         WIDTH,
         HEIGHT,
         WindowOptions {
@@ -56,36 +57,35 @@ fn main() -> Result<(), Error> {
             scale_mode: ScaleMode::AspectRatioStretch,
             ..WindowOptions::default()
         },
-    )
-    .expect("Unable to open the window");
+    )?;
 
-    // Limit to max ~60 fps update rate.
     window.set_target_fps(FRAME_RATE);
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         {
-            // Lock the volume variable to update it
-            let mut vol = volume_for_audio.lock()?;
-            // If any key is pressed, set volume to 0.03; otherwise, mute (0.0)
+            // Lock the volume
+            let mut volume_lock = audio_volume.lock()?;
 
-            // Lock the CPU and update its keyboard state
-            let mut cpu_lock = cpu.lock()?;
-            update_cpu_keyboard(&mut cpu_lock, &window);
-            *vol = if cpu_lock.read_sound().clone() > 0 {
+            // Lock the CPU and check if sound needs to be played
+            let cpu_lock = cpu.lock()?;
+            *volume_lock = if cpu_lock.get_sound().clone() > 0 {
                 VOLUME_ON
             } else {
                 VOLUME_OFF
             };
         }
 
-        // Fetch the display buffer from the CPU.
-        let display_buffer = {
-            let cpu_lock = cpu.lock()?;
-            // TODO maybe slow to clone? idk
-            cpu_lock.display.as_slice().clone()
-        };
+        {
+            // Lock the CPU and update the keyboars
+            let mut cpu_lock = cpu.lock()?;
+            update_cpu_keyboard(&mut cpu_lock, &window);
+        }
 
-        let window_buffer = display_buffer_to_rgb(&display_buffer);
+        let window_buffer = {
+            // Lock the CPU and grab the display buffer
+            let cpu_lock = cpu.lock()?;
+            display_buffer_to_rgb(cpu_lock.get_display().as_slice())
+        };
 
         // Update the window with the current display buffer.
         window.update_with_buffer(&window_buffer, WIDTH, HEIGHT)?;
