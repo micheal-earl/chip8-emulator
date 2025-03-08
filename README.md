@@ -6,7 +6,7 @@ I am looking for work! Check the contact section!
 
 ### Check out a Video!
 
-[](https://www.youtube.com/watch?v=0Ip1Dl0pyxw)
+[](https://youtu.be/ZOGYosR6_As)
 
 ---
 
