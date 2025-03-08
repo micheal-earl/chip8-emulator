@@ -6,7 +6,7 @@ I am looking for work! Check the contact section!
 
 ### Check out a Video!
 
-[](https://youtu.be/ZOGYosR6_As)
+https://youtu.be/ZOGYosR6_As
 
 ---
 
@@ -115,7 +115,7 @@ cargo run .\roms\test\test_opcode.ch8
 
 **Micheal Earl**  
 [@m-earl.bsky.social](https://bsky.app/profile/m-earl.bsky.social)  
-[LinkedIn](https://www.linkedin.com/in/micheal-earl/)
+[LinkedIn](https://www.linkedin.com/in/micheal-earl/)  
 Email: [michealearldev@gmail.com](mailto:michealearldev@gmail.com)
 
 ---
