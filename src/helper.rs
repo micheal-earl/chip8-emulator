@@ -45,6 +45,7 @@ pub fn update_cpu_keyboard(cpu: &mut Cpu, window: &Window) {
     }
 }
 
+// TODO Audio scuffed, idk what I'm doing here
 pub fn prepare_audio(volume: Arc<Mutex<f32>>) -> Result<OutputDevice, Error> {
     let params = OutputDeviceParameters {
         channels_count: 2,
