@@ -1,5 +1,5 @@
 mod cpu;
-pub mod error;
+mod error;
 mod helper;
 mod rom;
 
