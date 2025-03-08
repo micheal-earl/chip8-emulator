@@ -53,7 +53,7 @@ fn main() -> Result<(), Error> {
         HEIGHT,
         WindowOptions {
             resize: true,
-            scale: Scale::X8,
+            scale: Scale::X16,
             scale_mode: ScaleMode::AspectRatioStretch,
             ..WindowOptions::default()
         },
@@ -76,7 +76,7 @@ fn main() -> Result<(), Error> {
         }
 
         {
-            // Lock the CPU and update the keyboars
+            // Lock the CPU and update the keyboard
             let mut cpu_lock = cpu.lock()?;
             update_cpu_keyboard(&mut cpu_lock, &window);
         }

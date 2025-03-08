@@ -416,7 +416,7 @@ impl Cpu {
             let mut next_cycle_start = time::Instant::now() + CYCLE_INTERVAL;
 
             loop {
-                // Lock *only* while stepping & updating timers
+                // Lock only while stepping & updating timers
                 {
                     let mut cpu_lock = cpu.lock()?;
                     if !cpu_lock.step()? {

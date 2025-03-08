@@ -1,7 +1,10 @@
 [package]
-name = "cpu"
-version = "0.1.0"
+name = "chip8-emulator"
+version = "1.0.0"
 edition = "2021"
+authors = ["Micheal Earl <michealearldev@gmail.com>"]
+description = "A CHIP-8 CPU emulator written in Rust"
+repository = "https://github.com/micheal-earl/chip8-emulator"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

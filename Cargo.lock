@@ -88,6 +88,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "chip8-emulator"
+version = "1.0.0"
+dependencies = [
+ "minifb",
+ "tinyaudio",
+]
+
+[[package]]
 name = "clang-sys"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -121,14 +129,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ce857aa0b77d77287acc1ac3e37a05a8c95a2af3647d23b15f263bdaeb7562b"
 dependencies = [
  "bindgen",
-]
-
-[[package]]
-name = "cpu"
-version = "0.1.0"
-dependencies = [
- "minifb",
- "tinyaudio",
 ]
 
 [[package]]
